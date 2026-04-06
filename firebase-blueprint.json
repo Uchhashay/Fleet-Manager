@@ -1,0 +1,215 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "User Profile",
+      "description": "Stores user profile information and roles.",
+      "type": "object",
+      "properties": {
+        "full_name": { "type": "string", "description": "Full name of the user." },
+        "role": { "type": "string", "enum": ["admin", "accountant", "driver", "helper"], "description": "Role of the user." },
+        "created_at": { "type": "string", "format": "date-time", "description": "When the profile was created." }
+      },
+      "required": ["full_name", "role"]
+    },
+    "Bus": {
+      "title": "Bus",
+      "description": "Information about a bus in the fleet.",
+      "type": "object",
+      "properties": {
+        "registration_number": { "type": "string", "description": "Registration number of the bus." },
+        "model": { "type": "string", "description": "Model of the bus." },
+        "capacity": { "type": "integer", "description": "Seating capacity of the bus." },
+        "created_at": { "type": "string", "format": "date-time", "description": "When the bus was added." }
+      },
+      "required": ["registration_number"]
+    },
+    "Staff": {
+      "title": "Staff",
+      "description": "Information about staff members (drivers and helpers).",
+      "type": "object",
+      "properties": {
+        "full_name": { "type": "string", "description": "Full name of the staff member." },
+        "role": { "type": "string", "enum": ["admin", "accountant", "driver", "helper"], "description": "Role of the staff member." },
+        "bus_id": { "type": "string", "description": "Primary assigned bus ID." },
+        "salary": { "type": "integer", "description": "Fixed monthly salary (₹)." },
+        "duty_rate": { "type": "integer", "description": "Daily duty allowance (₹/day)." },
+        "join_date": { "type": "string", "format": "date", "description": "Joining date." },
+        "is_active": { "type": "boolean", "description": "Whether the staff member is active." },
+        "created_at": { "type": "string", "format": "date-time", "description": "When the staff member was added." }
+      },
+      "required": ["full_name", "role", "salary", "duty_rate"]
+    },
+    "DailyRecord": {
+      "title": "Daily Record",
+      "description": "Daily collection and fuel records for a bus.",
+      "type": "object",
+      "properties": {
+        "date": { "type": "string", "format": "date", "description": "Date of the record." },
+        "bus_id": { "type": "string", "description": "ID of the bus." },
+        "driver_id": { "type": "string", "description": "ID of the driver." },
+        "helper_id": { "type": "string", "description": "ID of the helper." },
+        "is_holiday": { "type": "boolean", "description": "Whether it was a holiday." },
+        "school_morning": { "type": "integer", "description": "School morning collection." },
+        "school_evening": { "type": "integer", "description": "School evening collection." },
+        "charter_morning": { "type": "integer", "description": "Charter morning collection." },
+        "charter_evening": { "type": "integer", "description": "Charter evening collection." },
+        "private_booking": { "type": "integer", "description": "Private booking collection." },
+        "booking_expense": { "type": "integer", "description": "Expenses related to booking." },
+        "fuel_amount": { "type": "integer", "description": "Fuel expense amount." },
+        "fuel_type": { "type": "string", "enum": ["CNG", "Petrol", "Diesel"], "description": "Type of fuel." },
+        "duty_paid": { "type": "integer", "description": "Duty paid to driver/helper that day." },
+        "notes": { "type": "string", "description": "Additional notes." },
+        "created_by": { "type": "string", "description": "UID of the user who created the record." },
+        "created_at": { "type": "string", "format": "date-time", "description": "When the record was created." }
+      },
+      "required": ["date", "bus_id"]
+    },
+    "BusExpense": {
+      "title": "Bus Expense",
+      "description": "Detailed expenses for a specific bus.",
+      "type": "object",
+      "properties": {
+        "date": { "type": "string", "format": "date", "description": "Date of the expense." },
+        "bus_id": { "type": "string", "description": "ID of the bus." },
+        "category": { "type": "string", "enum": ["fuel", "maintenance_repairs", "traffic_police", "licensing_registration", "interstate_regulatory"], "description": "Expense category." },
+        "subcategory": { "type": "string", "description": "Expense sub-category." },
+        "amount": { "type": "integer", "description": "Expense amount." },
+        "description": { "type": "string", "description": "Additional description." },
+        "receipt_ref": { "type": "string", "description": "Optional receipt reference." },
+        "created_by": { "type": "string", "description": "UID of the creator." },
+        "created_at": { "type": "string", "format": "date-time", "description": "When the record was created." }
+      },
+      "required": ["date", "bus_id", "category", "amount"]
+    },
+    "CompanyExpense": {
+      "title": "Company Expense",
+      "description": "General company overhead expenses.",
+      "type": "object",
+      "properties": {
+        "date": { "type": "string", "format": "date", "description": "Date of the expense." },
+        "category": { "type": "string", "enum": ["insurance", "overhead"], "description": "Expense category." },
+        "subcategory": { "type": "string", "description": "Expense sub-category." },
+        "bus_id": { "type": "string", "description": "Optional bus ID for insurance allocation." },
+        "amount": { "type": "integer", "description": "Expense amount." },
+        "description": { "type": "string", "description": "Additional description." },
+        "receipt_ref": { "type": "string", "description": "Optional receipt reference." },
+        "created_by": { "type": "string", "description": "UID of the creator." },
+        "created_at": { "type": "string", "format": "date-time", "description": "When the record was created." }
+      },
+      "required": ["date", "category", "amount"]
+    },
+    "SalaryRecord": {
+      "title": "Salary Record",
+      "description": "Monthly salary payment records for staff.",
+      "type": "object",
+      "properties": {
+        "staff_id": { "type": "string", "description": "ID of the staff member." },
+        "month": { "type": "string", "description": "Month in YYYY-MM format." },
+        "working_days": { "type": "integer", "description": "Number of duty days." },
+        "duty_amount": { "type": "integer", "description": "Total duty earnings." },
+        "fixed_salary": { "type": "integer", "description": "Fixed salary component." },
+        "advance": { "type": "integer", "description": "Salary advance taken." },
+        "deductions": { "type": "integer", "description": "Other deductions." },
+        "net_payable": { "type": "integer", "description": "Final net payable amount." },
+        "status": { "type": "string", "enum": ["pending", "paid"], "description": "Payment status." },
+        "created_at": { "type": "string", "format": "date-time", "description": "When the record was created." }
+      },
+      "required": ["staff_id", "month", "net_payable"]
+    },
+    "AccountantTransaction": {
+      "title": "Accountant Transaction",
+      "description": "Transactions recorded in the accountant's cashbook.",
+      "type": "object",
+      "properties": {
+        "date": { "type": "string", "format": "date-time", "description": "Date of transaction." },
+        "type": { "type": "string", "enum": ["Cash In", "Cash Out"], "description": "Type of transaction." },
+        "category": { "type": "string", "description": "Category of transaction." },
+        "amount": { "type": "number", "description": "Transaction amount." },
+        "related_party": { "type": "string", "description": "Related party name." },
+        "notes": { "type": "string", "description": "Additional notes." },
+        "recorded_by": { "type": "string", "description": "UID of the user who recorded the transaction." },
+        "created_at": { "type": "string", "format": "date-time", "description": "Creation timestamp." }
+      },
+      "required": ["date", "type", "category", "amount", "recorded_by"]
+    },
+    "FeeCollection": {
+      "title": "Fee Collection",
+      "description": "Records of student fee collections.",
+      "type": "object",
+      "properties": {
+        "date": { "type": "string", "format": "date-time", "description": "Date of collection." },
+        "student_name": { "type": "string", "description": "Name of the student." },
+        "receipt_no": { "type": "string", "description": "Receipt number." },
+        "school_name": { "type": "string", "description": "Name of the school." },
+        "received_by": { "type": "string", "description": "Who physically collected the fee." },
+        "data_entry_by": { "type": "string", "description": "Who entered the record." },
+        "amount": { "type": "number", "description": "Amount collected." },
+        "parchi_photo_url": { "type": "string", "description": "URL to the photo of the receipt." },
+        "payment_mode": { "type": "string", "enum": ["Cash", "Online", "Cheque"], "description": "Mode of payment." },
+        "fee_type": { "type": "string", "description": "Type of fee." },
+        "notes": { "type": "string", "description": "Additional notes." },
+        "recorded_by": { "type": "string", "description": "UID of the user who recorded the collection." },
+        "created_at": { "type": "string", "format": "date-time", "description": "Creation timestamp." }
+      },
+      "required": ["date", "student_name", "school_name", "amount", "recorded_by"]
+    },
+    "CashTransaction": {
+      "title": "Cash Transaction",
+      "description": "Transactions recorded in the accountant's cashbook.",
+      "type": "object",
+      "properties": {
+        "date": { "type": "string", "format": "date", "description": "Date of transaction (YYYY-MM-DD)." },
+        "type": { "type": "string", "enum": ["in", "out"], "description": "Type of transaction." },
+        "category": { "type": "string", "enum": ["owner_transfer", "salary", "bus_expense", "office_expense", "fee_collection", "misc"], "description": "Category of transaction." },
+        "amount": { "type": "number", "description": "Transaction amount." },
+        "description": { "type": "string", "description": "Transaction description." },
+        "linked_id": { "type": "string", "description": "ID of the linked record (salary, expense, etc.)." },
+        "staff_id": { "type": "string", "description": "ID of the staff member for salary payments." },
+        "created_at": { "type": "string", "format": "date-time", "description": "Creation timestamp." }
+      },
+      "required": ["date", "type", "category", "amount", "description"]
+    }
+  },
+  "firestore": {
+    "/profiles/{userId}": {
+      "schema": "UserProfile",
+      "description": "User profile documents."
+    },
+    "/buses/{busId}": {
+      "schema": "Bus",
+      "description": "Bus fleet documents."
+    },
+    "/staff/{staffId}": {
+      "schema": "Staff",
+      "description": "Staff member documents."
+    },
+    "/daily_records/{recordId}": {
+      "schema": "DailyRecord",
+      "description": "Daily entry records."
+    },
+    "/bus_expenses/{expenseId}": {
+      "schema": "BusExpense",
+      "description": "Bus-specific expenses."
+    },
+    "/company_expenses/{expenseId}": {
+      "schema": "CompanyExpense",
+      "description": "Company overhead expenses."
+    },
+    "/salary_records/{recordId}": {
+      "schema": "SalaryRecord",
+      "description": "Staff salary records."
+    },
+    "/accountant_transactions/{transactionId}": {
+      "schema": "AccountantTransaction",
+      "description": "Accountant cashbook transactions."
+    },
+    "/fee_collections/{collectionId}": {
+      "schema": "FeeCollection",
+      "description": "Student fee collection records."
+    },
+    "/cash_transactions/{transactionId}": {
+      "schema": "CashTransaction",
+      "description": "Accountant cash transactions."
+    }
+  }
+}

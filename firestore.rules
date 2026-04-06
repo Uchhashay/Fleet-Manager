@@ -1,0 +1,137 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: profiles
+    // Document ID: {userId}
+    // Fields:
+    //   - full_name: string (required)
+    //   - role: string (required, ['admin', 'accountant', 'driver', 'helper'])
+    //   - created_at: timestamp (required)
+    //
+    // Collection: buses
+    // Document ID: {busId}
+    // Fields:
+    //   - registration_number: string (required)
+    //   - model: string
+    //   - capacity: number
+    //   - created_at: timestamp
+    //
+    // Collection: staff
+    // Document ID: {staffId}
+    // Fields:
+    //   - full_name: string (required)
+    //   - role: string (required, ['driver', 'helper'])
+    //   - fixed_salary: number
+    //   - duty_rate: number
+    //   - created_at: timestamp
+    //
+    // Collection: daily_records
+    // Document ID: {recordId}
+    // Fields:
+    //   - date: string (required, YYYY-MM-DD)
+    //   - bus_id: string (required)
+    //   - driver_id: string
+    //   - helper_id: string
+    //   - fuel_amount: number
+    //   - ... (collection fields)
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() && 
+        (
+          (exists(/databases/$(database)/documents/profiles/$(request.auth.uid)) && 
+           get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data.role == 'admin') ||
+          request.auth.token.email == "dhruvsingh349@gmail.com"
+        );
+    }
+
+    function isAccountant() {
+      return isAuthenticated() && 
+        get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data.role == 'accountant';
+    }
+
+    function isStaff() {
+      return isAuthenticated() && 
+        (get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data.role == 'driver' ||
+         get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data.role == 'helper');
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isValidUserProfile(data) {
+      return data.keys().hasAll(['full_name', 'role']) &&
+             data.full_name is string && data.full_name.size() > 0 && data.full_name.size() < 100 &&
+             data.role in ['admin', 'accountant', 'driver', 'helper'];
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /profiles/{userId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && isOwner(userId) && isValidUserProfile(request.resource.data);
+      allow update: if isAuthenticated() && (isOwner(userId) || isAdmin()) && isValidUserProfile(request.resource.data);
+    }
+
+    match /buses/{busId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+
+    match /staff/{staffId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+
+    match /daily_records/{recordId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin() || isAccountant();
+    }
+
+    match /bus_expenses/{expenseId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin() || isAccountant();
+    }
+
+    match /company_expenses/{expenseId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin() || isAccountant();
+    }
+
+    match /salary_records/{recordId} {
+      allow read: if isAuthenticated() && (isAdmin() || isAccountant() || request.auth.uid == resource.data.staff_id);
+      allow write: if isAdmin() || isAccountant();
+    }
+
+    match /accountant_transactions/{transactionId} {
+      allow read: if isAuthenticated() && (isAdmin() || isAccountant());
+      allow write: if isAuthenticated() && (isAdmin() || isAccountant());
+    }
+
+    match /fee_collections/{collectionId} {
+      allow read: if isAuthenticated() && (isAdmin() || isAccountant());
+      allow write: if isAuthenticated() && (isAdmin() || isAccountant());
+    }
+
+    match /cash_transactions/{transactionId} {
+      allow read: if isAuthenticated() && (isAdmin() || isAccountant());
+      allow write: if isAuthenticated() && (isAdmin() || isAccountant());
+    }
+  }
+}

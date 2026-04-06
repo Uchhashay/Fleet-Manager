@@ -1,0 +1,129 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+
+  --color-background: var(--background);
+  --color-surface: var(--surface);
+  --color-border: var(--border);
+  --color-border-hover: var(--border-hover);
+  --color-primary: var(--primary);
+  --color-secondary: var(--secondary);
+  --color-accent: #7c5cfc;
+  --color-accent-hover: #6a4de0;
+  --color-accent-foreground: #ffffff;
+  --color-success: #22c55e;
+  --color-danger: #ef4444;
+  --color-warning: #f59e0b;
+
+  --radius-xl: 12px;
+  --radius-lg: 8px;
+  --radius-md: 6px;
+}
+
+@layer base {
+  :root {
+    --background: #0a0a0a;
+    --surface: #111111;
+    --border: #1f1f1f;
+    --border-hover: #2e2e2e;
+    --primary: #f0f0f0;
+    --secondary: #717171;
+  }
+
+  .light {
+    --background: #f9f9f9;
+    --surface: #ffffff;
+    --border: #e5e5e5;
+    --border-hover: #d4d4d4;
+    --primary: #111111;
+    --secondary: #666666;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-primary font-sans antialiased selection:bg-accent/30 selection:text-accent-foreground;
+    line-height: 1.6;
+  }
+  
+  h1, h2, h3, h4, h5, h6 {
+    @apply tracking-tight;
+  }
+
+  .font-mono {
+    @apply font-mono;
+    letter-spacing: -0.02em;
+  }
+
+  .text-secondary {
+    @apply text-secondary;
+  }
+
+  /* Custom Scrollbar */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    @apply bg-transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    @apply bg-border rounded-full hover:bg-border-hover transition-colors;
+  }
+}
+
+@layer components {
+  .card {
+    @apply bg-surface border border-border rounded-xl p-5 transition-colors duration-200 hover:border-border-hover;
+  }
+  
+  .btn-primary {
+    @apply bg-accent text-white px-5 py-2.5 rounded-lg font-medium transition-all duration-200 hover:bg-accent-hover active:scale-[0.98] disabled:opacity-50 disabled:pointer-events-none;
+  }
+  
+  .btn-secondary {
+    @apply bg-transparent border border-border text-primary px-5 py-2.5 rounded-lg font-medium transition-all duration-200 hover:bg-surface active:scale-[0.98] disabled:opacity-50 disabled:pointer-events-none;
+  }
+  
+  .btn-danger {
+    @apply bg-transparent border border-danger text-danger px-5 py-2.5 rounded-lg font-medium transition-all duration-200 hover:bg-danger/10 active:scale-[0.98] disabled:opacity-50 disabled:pointer-events-none;
+  }
+  
+  .input {
+    @apply bg-transparent border border-border rounded-lg px-3.5 py-2.5 text-sm transition-all duration-200 focus:border-accent focus:outline-none placeholder:text-secondary;
+  }
+  
+  .label {
+    @apply block text-xs font-medium text-secondary uppercase tracking-wider mb-2;
+  }
+  
+  .badge {
+    @apply inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-medium;
+  }
+
+  .table {
+    @apply w-full text-left border-collapse;
+  }
+  
+  .table thead {
+    @apply border-b border-border bg-surface;
+  }
+  
+  .table th {
+    @apply px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-secondary text-left;
+  }
+  
+  .table td {
+    @apply px-6 py-4 text-sm border-b border-border/50;
+  }
+  
+  .table tr:last-child td {
+    @apply border-b-0;
+  }
+}
