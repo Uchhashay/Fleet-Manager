@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { db, auth } from '../lib/firebase';
-import { collection, query, where, getDocs, orderBy, addDoc, serverTimestamp, Timestamp } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, orderBy, addDoc, serverTimestamp, Timestamp, getDocs } from 'firebase/firestore';
 import { format, startOfMonth, endOfMonth } from 'date-fns';
 import { 
   Plus, 
@@ -46,23 +46,18 @@ export function FeeCollectionPage() {
   const collectors = ["Dhruv", "Jai", "Other"];
 
   useEffect(() => {
-    fetchCollections();
-  }, [filters]);
-
-  async function fetchCollections() {
     setLoading(true);
-    try {
-      const start = Timestamp.fromDate(startOfMonth(new Date(filters.month)));
-      const end = Timestamp.fromDate(endOfMonth(new Date(filters.month)));
+    const start = Timestamp.fromDate(startOfMonth(new Date(filters.month)));
+    const end = Timestamp.fromDate(endOfMonth(new Date(filters.month)));
 
-      let q = query(
-        collection(db, 'fee_collections'),
-        where('date', '>=', start),
-        where('date', '<=', end),
-        orderBy('date', 'desc')
-      );
+    let q = query(
+      collection(db, 'fee_collections'),
+      where('date', '>=', start),
+      where('date', '<=', end),
+      orderBy('date', 'desc')
+    );
 
-      const snap = await getDocs(q);
+    const unsubscribe = onSnapshot(q, (snap) => {
       let list = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as FeeCollection));
 
       if (filters.school !== 'all') {
@@ -73,12 +68,16 @@ export function FeeCollectionPage() {
       }
 
       setCollections(list);
-    } catch (error) {
-      console.error('Error fetching fee collections:', error);
-    } finally {
       setLoading(false);
-    }
-  }
+    }, (error) => {
+      handleFirestoreError(error, OperationType.GET, 'fee_collections');
+      setLoading(false);
+    });
+
+    return () => unsubscribe();
+  }, [filters]);
+
+  // Removed fetchCollections as it's replaced by onSnapshot hook logic above
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -110,7 +109,6 @@ export function FeeCollectionPage() {
       }
 
       setIsModalOpen(false);
-      fetchCollections();
       setFormData({
         date: new Date().toISOString().split('T')[0],
         student_name: '',

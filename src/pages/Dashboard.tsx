@@ -296,24 +296,41 @@ export function Dashboard() {
           <h1 className="text-3xl font-bold tracking-tight text-primary">Admin Dashboard</h1>
           <div className="flex items-center space-x-4">
             <div className="flex items-center bg-surface p-1 rounded-xl border border-border shadow-sm">
-              <button
-                onClick={() => setShowCombined(false)}
-                className={cn(
-                  "px-4 py-1.5 text-[10px] font-bold uppercase tracking-wider rounded-lg transition-all",
-                  !showCombined ? "bg-accent text-white shadow-md" : "text-secondary hover:text-primary"
-                )}
-              >
-                Owner Only
-              </button>
-              <button
-                onClick={() => setShowCombined(true)}
-                className={cn(
-                  "px-4 py-1.5 text-[10px] font-bold uppercase tracking-wider rounded-lg transition-all",
-                  showCombined ? "bg-accent text-white shadow-md" : "text-secondary hover:text-primary"
-                )}
-              >
-                Combined
-              </button>
+              <div className="relative group">
+                <button
+                  onClick={() => setShowCombined(false)}
+                  className={cn(
+                    "px-4 py-1.5 text-[10px] font-bold uppercase tracking-wider rounded-lg transition-all",
+                    !showCombined ? "bg-accent text-white shadow-md" : "text-secondary hover:text-primary"
+                  )}
+                >
+                  Owner Only
+                </button>
+                <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-48 p-2 bg-surface border border-border rounded-lg shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-50">
+                  <p className="text-[10px] font-medium text-primary leading-relaxed">
+                    Shows only your records. Ideal for private tracking of owner-level transactions.
+                  </p>
+                  <div className="absolute top-full left-1/2 -translate-x-1/2 border-8 border-transparent border-t-border"></div>
+                </div>
+              </div>
+
+              <div className="relative group">
+                <button
+                  onClick={() => setShowCombined(true)}
+                  className={cn(
+                    "px-4 py-1.5 text-[10px] font-bold uppercase tracking-wider rounded-lg transition-all",
+                    showCombined ? "bg-accent text-white shadow-md" : "text-secondary hover:text-primary"
+                  )}
+                >
+                  Combined
+                </button>
+                <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-48 p-2 bg-surface border border-border rounded-lg shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-50">
+                  <p className="text-[10px] font-medium text-primary leading-relaxed">
+                    Shows all records from you and all accountants. Provides a complete view of company operations.
+                  </p>
+                  <div className="absolute top-full left-1/2 -translate-x-1/2 border-8 border-transparent border-t-border"></div>
+                </div>
+              </div>
             </div>
             <div className="text-xs font-medium text-secondary bg-surface px-3 py-1.5 rounded-full border border-border">
               {format(new Date(), 'MMMM yyyy')}

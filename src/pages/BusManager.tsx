@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { db } from '../lib/firebase';
-import { collection, getDocs, addDoc, updateDoc, deleteDoc, doc, serverTimestamp, query, orderBy } from 'firebase/firestore';
+import { collection, onSnapshot, addDoc, updateDoc, deleteDoc, doc, serverTimestamp, query, orderBy } from 'firebase/firestore';
 import { Bus } from '../types';
 import { Plus, Bus as BusIcon, Trash2, Edit2, X, Save, Info, Users } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -18,21 +18,21 @@ export function BusManager() {
   });
 
   useEffect(() => {
-    fetchBuses();
+    setLoading(true);
+    const q = query(collection(db, 'buses'), orderBy('registration_number'));
+    const unsubscribe = onSnapshot(q, (snap) => {
+      const busesList = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Bus));
+      setBuses(busesList);
+      setLoading(false);
+    }, (error) => {
+      console.error('Error fetching buses:', error);
+      setLoading(false);
+    });
+
+    return () => unsubscribe();
   }, []);
 
-  async function fetchBuses() {
-    setLoading(true);
-    try {
-      const busesSnap = await getDocs(query(collection(db, 'buses'), orderBy('registration_number')));
-      const busesList = busesSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Bus));
-      setBuses(busesList);
-    } catch (error) {
-      console.error('Error fetching buses:', error);
-    } finally {
-      setLoading(false);
-    }
-  }
+  // Removed fetchBuses as it's replaced by onSnapshot hook logic above
 
   const handleOpenModal = (b?: Bus) => {
     if (b) {
@@ -65,7 +65,6 @@ export function BusManager() {
         });
       }
       setIsModalOpen(false);
-      fetchBuses();
     } catch (error) {
       console.error('Error saving bus:', error);
     }
@@ -75,7 +74,6 @@ export function BusManager() {
     if (!confirm('Are you sure you want to delete this bus?')) return;
     try {
       await deleteDoc(doc(db, 'buses', id));
-      fetchBuses();
     } catch (error) {
       console.error('Error deleting bus:', error);
     }

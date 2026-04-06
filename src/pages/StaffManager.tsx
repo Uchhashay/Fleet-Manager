@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { db } from '../lib/firebase';
-import { collection, getDocs, addDoc, updateDoc, deleteDoc, doc, serverTimestamp, query, orderBy } from 'firebase/firestore';
+import { collection, onSnapshot, addDoc, updateDoc, deleteDoc, doc, serverTimestamp, query, orderBy } from 'firebase/firestore';
 import { Staff } from '../types';
 import { formatCurrency, cn } from '../lib/utils';
 import { UserPlus, Trash2, Edit2, X, Save, Users, Briefcase, IndianRupee, Clock, BarChart2 } from 'lucide-react';
@@ -21,21 +21,21 @@ export function StaffManager() {
   });
 
   useEffect(() => {
-    fetchStaff();
+    setLoading(true);
+    const q = query(collection(db, 'staff'), orderBy('full_name'));
+    const unsubscribe = onSnapshot(q, (snap) => {
+      const staffList = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Staff));
+      setStaff(staffList);
+      setLoading(false);
+    }, (error) => {
+      console.error('Error fetching staff:', error);
+      setLoading(false);
+    });
+
+    return () => unsubscribe();
   }, []);
 
-  async function fetchStaff() {
-    setLoading(true);
-    try {
-      const staffSnap = await getDocs(query(collection(db, 'staff'), orderBy('full_name')));
-      const staffList = staffSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Staff));
-      setStaff(staffList);
-    } catch (error) {
-      console.error('Error fetching staff:', error);
-    } finally {
-      setLoading(false);
-    }
-  }
+  // Removed fetchStaff as it's replaced by onSnapshot hook logic above
 
   const handleOpenModal = (s?: Staff) => {
     if (s) {
@@ -72,7 +72,6 @@ export function StaffManager() {
         });
       }
       setIsModalOpen(false);
-      fetchStaff();
     } catch (error) {
       console.error('Error saving staff:', error);
     }
@@ -82,7 +81,6 @@ export function StaffManager() {
     if (!confirm('Are you sure you want to delete this staff member?')) return;
     try {
       await deleteDoc(doc(db, 'staff', id));
-      fetchStaff();
     } catch (error) {
       console.error('Error deleting staff:', error);
     }

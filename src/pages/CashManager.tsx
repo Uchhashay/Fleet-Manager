@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { db, auth } from '../lib/firebase';
-import { collection, query, orderBy, getDocs, addDoc, serverTimestamp, where, limit, setDoc, doc } from 'firebase/firestore';
+import { collection, query, orderBy, onSnapshot, addDoc, serverTimestamp, where, limit, setDoc, doc, getDocs } from 'firebase/firestore';
 import { CashTransaction, Staff } from '../types';
 import { formatCurrency, cn } from '../lib/utils';
+import { handleFirestoreError, OperationType } from '../lib/firebase-utils';
 import { 
   Wallet, 
   ArrowUpRight, 
@@ -45,9 +46,44 @@ export function CashManager() {
   });
 
   useEffect(() => {
-    fetchTransactions();
     fetchStaff();
-  }, []);
+    
+    let q = query(
+      collection(db, 'cash_transactions'),
+      orderBy('date', 'desc'),
+      orderBy('created_at', 'desc'),
+      limit(100)
+    );
+
+    if (profile?.role === 'accountant') {
+      q = query(
+        collection(db, 'cash_transactions'),
+        where('created_by', '==', auth.currentUser?.uid),
+        orderBy('date', 'desc'),
+        orderBy('created_at', 'desc'),
+        limit(100)
+      );
+    }
+
+    const unsubscribe = onSnapshot(q, (snap) => {
+      const data = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as CashTransaction));
+      setTransactions(data);
+
+      const allIn = data.filter(t => t.type === 'in').reduce((sum, t) => sum + t.amount, 0);
+      const allOut = data.filter(t => t.type === 'out').reduce((sum, t) => sum + t.amount, 0);
+      setStats({
+        totalIn: allIn,
+        totalOut: allOut,
+        balance: allIn - allOut
+      });
+      setLoading(false);
+    }, (error) => {
+      handleFirestoreError(error, OperationType.GET, 'cash_transactions');
+      setLoading(false);
+    });
+
+    return () => unsubscribe();
+  }, [profile?.role]);
 
   async function fetchStaff() {
     try {
@@ -58,42 +94,7 @@ export function CashManager() {
     }
   }
 
-  async function fetchTransactions() {
-    setLoading(true);
-    try {
-      let q = query(
-        collection(db, 'cash_transactions'),
-        orderBy('date', 'desc'),
-        orderBy('created_at', 'desc'),
-        limit(100)
-      );
-      if (profile?.role === 'accountant') {
-        q = query(
-          collection(db, 'cash_transactions'),
-          where('created_by', '==', auth.currentUser?.uid),
-          orderBy('date', 'desc'),
-          orderBy('created_at', 'desc'),
-          limit(100)
-        );
-      }
-      const snap = await getDocs(q);
-      const data = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as CashTransaction));
-      setTransactions(data);
-
-      // Calculate stats (for the current month or all time? Let's do all for balance)
-      const allIn = data.filter(t => t.type === 'in').reduce((sum, t) => sum + t.amount, 0);
-      const allOut = data.filter(t => t.type === 'out').reduce((sum, t) => sum + t.amount, 0);
-      setStats({
-        totalIn: allIn,
-        totalOut: allOut,
-        balance: allIn - allOut
-      });
-    } catch (error) {
-      console.error('Error fetching transactions:', error);
-    } finally {
-      setLoading(false);
-    }
-  }
+  // Removed fetchTransactions as it's replaced by onSnapshot hook logic above
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -132,7 +133,6 @@ export function CashManager() {
         date: format(new Date(), 'yyyy-MM-dd'),
         staff_id: ''
       });
-      fetchTransactions();
     } catch (error) {
       console.error('Error adding transaction:', error);
     }
