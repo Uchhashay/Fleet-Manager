@@ -80,11 +80,12 @@ export interface CashTransaction {
   id: string;
   date: string; // YYYY-MM-DD
   type: 'in' | 'out';
-  category: 'owner_transfer' | 'salary' | 'bus_expense' | 'office_expense' | 'fee_collection' | 'misc';
+  category: 'owner_transfer' | 'salary' | 'bus_expense' | 'office_expense' | 'fee_collection' | 'daily_collection' | 'misc';
   amount: number;
   description: string;
   linked_id?: string; // ID of salary_record or bus_expense
   staff_id?: string; // ID of staff member for salary payments
+  created_by?: string;
   created_at: any;
 }
 

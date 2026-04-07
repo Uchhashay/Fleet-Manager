@@ -107,10 +107,11 @@ export function DailyEntry() {
           await addDoc(collection(db, 'cash_transactions'), {
             date: formData.date,
             type: 'in',
-            category: 'misc',
+            category: 'daily_collection',
             amount: netCollection,
             description: `Daily Collection: Bus ${buses.find(b => b.id === formData.bus_id)?.registration_number}`,
             linked_id: docRef.id,
+            created_by: auth.currentUser?.uid,
             created_at: serverTimestamp()
           });
         } catch (error) {
@@ -128,6 +129,7 @@ export function DailyEntry() {
             amount: netExpense,
             description: `Daily Expenses (Fuel/Duty): Bus ${buses.find(b => b.id === formData.bus_id)?.registration_number}`,
             linked_id: docRef.id,
+            created_by: auth.currentUser?.uid,
             created_at: serverTimestamp()
           });
         } catch (error) {

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { db } from '../lib/firebase';
+import { db, auth } from '../lib/firebase';
 import { collection, getDocs, query, where, orderBy, setDoc, doc, serverTimestamp, addDoc } from 'firebase/firestore';
 import { Staff, SalaryRecord, CashTransaction } from '../types';
 import { formatCurrency, cn } from '../lib/utils';
@@ -136,6 +136,7 @@ export function SalaryManager() {
             amount: salary.net_payable,
             description: `Salary payment for ${staffMember?.full_name} (${format(currentMonth, 'MMMM yyyy')})`,
             linked_id: recordId,
+            created_by: auth.currentUser?.uid,
             created_at: serverTimestamp()
           });
         }

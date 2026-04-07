@@ -275,6 +275,7 @@ export function CashManager() {
                         <>
                           <option value="owner_transfer">Received from Owner</option>
                           <option value="fee_collection">Fee Collection</option>
+                          <option value="daily_collection">Daily Collection</option>
                           <option value="misc">Miscellaneous Income</option>
                         </>
                       ) : (

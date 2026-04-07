@@ -98,6 +98,7 @@ export function ExpenseEntry() {
           amount: formData.amount,
           description: `${type === 'bus' ? 'Bus' : 'Company'} Expense: ${formData.category}${formData.subcategory ? ` (${formData.subcategory})` : ''} - ${formData.description}`,
           linked_id: docRef.id,
+          created_by: auth.currentUser?.uid,
           created_at: serverTimestamp()
         });
       } catch (error) {

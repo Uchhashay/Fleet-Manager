@@ -101,6 +101,7 @@ export function FeeCollectionPage() {
             amount: formData.amount,
             description: `Fee collection for ${formData.school_name}: ${formData.student_name}`,
             linked_id: docRef.id,
+            created_by: auth.currentUser?.uid,
             created_at: serverTimestamp()
           });
         } catch (error) {

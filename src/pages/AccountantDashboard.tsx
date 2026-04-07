@@ -27,7 +27,15 @@ export function AccountantDashboard() {
     totalCollections: 0,
     totalExpenses: 0,
     netProfit: 0,
-    accountantCash: 0
+    accountantCash: 0,
+    cashBreakdown: {
+      daily: 0,
+      fees: 0,
+      manualIn: 0,
+      expenses: 0,
+      salary: 0,
+      transfers: 0
+    }
   });
   const [recentRecords, setRecentRecords] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -142,11 +150,31 @@ export function AccountantDashboard() {
         collection(db, 'cash_transactions'),
         where('created_by', '==', targetUid)
       ));
+      
       let accountantCash = 0;
+      const breakdown = {
+        daily: 0,
+        fees: 0,
+        manualIn: 0,
+        expenses: 0,
+        salary: 0,
+        transfers: 0
+      };
+
       cashSnap.docs.forEach(doc => {
         const t = doc.data();
-        if (t.type === 'in') accountantCash += t.amount;
-        else accountantCash -= t.amount;
+        const amount = t.amount || 0;
+        if (t.type === 'in') {
+          accountantCash += amount;
+          if (t.category === 'daily_collection') breakdown.daily += amount;
+          else if (t.category === 'fee_collection') breakdown.fees += amount;
+          else breakdown.manualIn += amount;
+        } else {
+          accountantCash -= amount;
+          if (t.category === 'salary') breakdown.salary += amount;
+          else if (t.category === 'owner_transfer') breakdown.transfers += amount;
+          else breakdown.expenses += amount;
+        }
       });
 
       // Fetch recent cash transactions (only for target accountant)
@@ -162,7 +190,8 @@ export function AccountantDashboard() {
         totalCollections,
         totalExpenses,
         netProfit: totalCollections - totalExpenses,
-        accountantCash
+        accountantCash,
+        cashBreakdown: breakdown
       });
       setRecentRecords(recentSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as CashTransaction)));
     } catch (error) {
@@ -248,12 +277,29 @@ export function AccountantDashboard() {
           animate={{ opacity: 1, y: 0 }}
           className="card bg-accent text-background border-none shadow-lg shadow-accent/20"
         >
-          <div className="flex items-center space-x-2 opacity-80">
-            <Wallet className="h-4 w-4" />
-            <span className="text-[10px] font-bold uppercase tracking-wider">Accountant Cash Balance</span>
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center space-x-2 opacity-80">
+              <Wallet className="h-4 w-4" />
+              <span className="text-[10px] font-bold uppercase tracking-wider">Accountant Cash Balance</span>
+            </div>
           </div>
-          <h3 className="mt-4 text-3xl font-bold font-mono tracking-tighter">{formatCurrency(stats.accountantCash)}</h3>
-          <p className="mt-1 text-[10px] opacity-70 font-medium text-background/80">Actual cash in hand with accountant</p>
+          <h3 className="text-3xl font-bold font-mono tracking-tighter">{formatCurrency(stats.accountantCash)}</h3>
+          <p className="mt-1 text-[10px] opacity-70 font-medium text-background/80 mb-4">Actual cash in hand with accountant</p>
+          
+          <div className="mt-4 pt-4 border-t border-background/20 space-y-2">
+            <div className="flex justify-between text-[10px] font-medium">
+              <span className="opacity-70">Daily Collections</span>
+              <span className="font-mono">+{formatCurrency(stats.cashBreakdown.daily)}</span>
+            </div>
+            <div className="flex justify-between text-[10px] font-medium">
+              <span className="opacity-70">Fee Collections</span>
+              <span className="font-mono">+{formatCurrency(stats.cashBreakdown.fees)}</span>
+            </div>
+            <div className="flex justify-between text-[10px] font-medium">
+              <span className="opacity-70">Expenses/Salary</span>
+              <span className="font-mono">-{formatCurrency(stats.cashBreakdown.expenses + stats.cashBreakdown.salary)}</span>
+            </div>
+          </div>
         </motion.div>
 
         <motion.div 
