@@ -20,8 +20,7 @@ export interface Staff {
   role: 'admin' | 'accountant' | 'driver' | 'helper';
   bus_id?: string;
   fixed_salary: number;
-  duty_rate: number;
-  ot_rate: number;
+  duty_rate?: number;
   join_date?: string;
   is_active: boolean;
   created_at: string;
@@ -39,11 +38,13 @@ export interface DailyRecord {
   charter_morning: number;
   charter_evening: number;
   private_booking: number;
-  booking_expense: number;
+  booking_details?: string;
   fuel_amount: number;
   fuel_type: 'CNG' | 'Petrol' | 'Diesel';
-  duty_paid: number;
-  overtime: number;
+  driver_duty_payable: number;
+  driver_duty_paid: number;
+  helper_duty_payable: number;
+  helper_duty_paid: number;
   notes?: string;
   created_by: string;
   created_at: string;
@@ -93,8 +94,6 @@ export interface SalaryRecord {
   month: string; // YYYY-MM
   working_days: number;
   duty_amount: number;
-  ot_hours: number;
-  ot_amount: number;
   fixed_salary: number;
   advance: number;
   deductions: number;

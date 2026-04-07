@@ -132,7 +132,7 @@ export function Layout() {
   return (
     <div className="flex min-h-screen flex-col bg-background text-primary transition-colors duration-300 md:flex-row">
       {/* Desktop Sidebar */}
-      <aside className="fixed left-0 top-0 hidden h-full w-64 flex-col border-r border-border bg-surface md:flex">
+      <aside className="fixed left-0 top-0 z-50 hidden h-full w-64 flex-col border-r border-border bg-surface md:flex">
         <div className="flex h-20 items-center px-8">
           <h1 className="text-xl font-bold tracking-tighter text-primary">
             JAGRITI<span className="text-accent">.</span>
@@ -190,7 +190,7 @@ export function Layout() {
       </aside>
 
       {/* Main Content Area */}
-      <div className="flex-1 md:ml-64">
+      <div className="flex-1 md:pl-64">
         <main className="min-h-screen p-4 pb-24 md:p-10 md:pb-10">
           <AnimatePresence mode="wait">
             <motion.div

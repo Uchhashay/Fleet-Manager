@@ -37,7 +37,7 @@
         "is_active": { "type": "boolean", "description": "Whether the staff member is active." },
         "created_at": { "type": "string", "format": "date-time", "description": "When the staff member was added." }
       },
-      "required": ["full_name", "role", "salary", "duty_rate"]
+      "required": ["full_name", "role", "salary"]
     },
     "DailyRecord": {
       "title": "Daily Record",
@@ -54,10 +54,13 @@
         "charter_morning": { "type": "integer", "description": "Charter morning collection." },
         "charter_evening": { "type": "integer", "description": "Charter evening collection." },
         "private_booking": { "type": "integer", "description": "Private booking collection." },
-        "booking_expense": { "type": "integer", "description": "Expenses related to booking." },
+        "booking_details": { "type": "string", "description": "Details about the private booking." },
         "fuel_amount": { "type": "integer", "description": "Fuel expense amount." },
         "fuel_type": { "type": "string", "enum": ["CNG", "Petrol", "Diesel"], "description": "Type of fuel." },
-        "duty_paid": { "type": "integer", "description": "Duty paid to driver/helper that day." },
+        "driver_duty_payable": { "type": "integer", "description": "Duty amount earned by driver (payable)." },
+        "driver_duty_paid": { "type": "integer", "description": "Duty amount actually paid to driver that day." },
+        "helper_duty_payable": { "type": "integer", "description": "Duty amount earned by helper (payable)." },
+        "helper_duty_paid": { "type": "integer", "description": "Duty amount actually paid to helper that day." },
         "notes": { "type": "string", "description": "Additional notes." },
         "created_by": { "type": "string", "description": "UID of the user who created the record." },
         "created_at": { "type": "string", "format": "date-time", "description": "When the record was created." }

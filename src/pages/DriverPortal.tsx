@@ -10,7 +10,6 @@ import {
   History, 
   ChevronRight,
   CheckCircle2,
-  Clock,
   User,
   Activity,
   TrendingUp,
@@ -118,22 +117,6 @@ export function DriverPortal() {
         <motion.div 
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.1 }}
-          className="card"
-        >
-          <div className="flex items-center space-x-2 text-secondary mb-6">
-            <Clock className="h-4 w-4 stroke-[1.5px] text-warning" />
-            <span className="text-[10px] font-bold uppercase tracking-widest">Overtime</span>
-          </div>
-          <h3 className="text-3xl font-bold text-primary tracking-tighter font-mono">
-            {currentSalary?.ot_hours || 0} <span className="text-sm font-normal text-secondary tracking-normal">Hrs</span>
-          </h3>
-          <p className="mt-2 text-[10px] font-medium text-secondary uppercase tracking-widest">Earned: {formatCurrency(currentSalary?.ot_amount || 0)}</p>
-        </motion.div>
-
-        <motion.div 
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.2 }}
           className="card"
         >
@@ -174,7 +157,6 @@ export function DriverPortal() {
           </div>
           <div className="h-px flex-1 bg-border/50 mx-6 hidden sm:block" />
           <div className="flex items-center space-x-2 text-secondary">
-            <Clock className="h-3.5 w-3.5 stroke-[1.5px]" />
             <span className="text-[10px] font-bold uppercase tracking-widest">Last 6 Months</span>
           </div>
         </div>

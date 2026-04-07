@@ -63,7 +63,7 @@ export function Cashbook() {
       dailySnap.docs.forEach(doc => {
         const data = doc.data() as DailyRecord;
         const inflow = (data.school_morning || 0) + (data.school_evening || 0) + (data.charter_morning || 0) + (data.charter_evening || 0) + (data.private_booking || 0);
-        const outflow = (data.fuel_amount || 0) + (data.duty_paid || 0);
+        const outflow = (data.fuel_amount || 0) + (data.driver_duty_paid || 0) + (data.helper_duty_paid || 0);
 
         if (inflow > 0) {
           dailyEntries.push({

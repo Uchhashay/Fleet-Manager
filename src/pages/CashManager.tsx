@@ -109,21 +109,6 @@ export function CashManager() {
         created_at: serverTimestamp()
       });
 
-      // If it's a salary payment, update the salary record system
-      if (formData.category === 'salary' && formData.staff_id) {
-        const monthStr = format(new Date(formData.date), 'yyyy-MM');
-        const recordId = `${formData.staff_id}_${monthStr}`;
-        
-        // Update or create salary record
-        await setDoc(doc(db, 'salary_records', recordId), {
-          staff_id: formData.staff_id,
-          month: monthStr,
-          status: 'paid',
-          net_payable: amount, // Assuming the manual entry is the net payable
-          updated_at: serverTimestamp()
-        }, { merge: true });
-      }
-
       setActiveForm(null);
       setFormData({
         type: 'in',
@@ -402,6 +387,7 @@ export function CashManager() {
                 <th>Date</th>
                 <th>Category</th>
                 <th>Description</th>
+                {profile?.role === 'admin' && <th>Recorded By</th>}
                 <th className="text-right">Amount</th>
               </tr>
             </thead>
@@ -432,6 +418,11 @@ export function CashManager() {
                       </span>
                     )}
                   </td>
+                  {profile?.role === 'admin' && (
+                    <td className="text-secondary text-[10px] font-bold uppercase tracking-widest">
+                      {t.created_by === auth.currentUser?.uid ? 'Me' : 'Staff'}
+                    </td>
+                  )}
                   <td className={cn(
                     "text-right font-bold font-mono",
                     t.type === 'in' ? "text-success" : "text-warning"
@@ -442,7 +433,7 @@ export function CashManager() {
               ))}
               {transactions.length === 0 && !loading && (
                 <tr>
-                  <td colSpan={4} className="py-12 text-center text-secondary font-medium">No transactions recorded</td>
+                  <td colSpan={profile?.role === 'admin' ? 5 : 4} className="py-12 text-center text-secondary font-medium">No transactions recorded</td>
                 </tr>
               )}
             </tbody>

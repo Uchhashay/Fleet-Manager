@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { db, auth } from '../lib/firebase';
 import { collection, getDocs, writeBatch, doc } from 'firebase/firestore';
+import { handleFirestoreError, OperationType } from '../lib/firebase-utils';
 import { Trash2, AlertTriangle, Loader2, CheckCircle2, ShieldAlert } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
@@ -13,7 +14,8 @@ const COLLECTIONS_TO_WIPE = [
   'salary_records',
   'staff',
   'bus_expenses',
-  'fee_collections' // Added this too as it's part of the app's data
+  'fee_collections',
+  'accountant_transactions'
 ];
 
 export function Cleanup() {
@@ -39,7 +41,13 @@ export function Cleanup() {
 
       for (const collectionName of COLLECTIONS_TO_WIPE) {
         setStatus(`Cleaning up ${collectionName}...`);
-        const querySnapshot = await getDocs(collection(db, collectionName));
+        let querySnapshot;
+        try {
+          querySnapshot = await getDocs(collection(db, collectionName));
+        } catch (err) {
+          handleFirestoreError(err, OperationType.GET, collectionName);
+          continue;
+        }
         
         if (querySnapshot.empty) continue;
 
@@ -68,7 +76,11 @@ export function Cleanup() {
       setConfirmText('');
     } catch (err: any) {
       console.error('Cleanup error:', err);
-      setError(err.message || 'An error occurred during cleanup');
+      try {
+        handleFirestoreError(err, OperationType.WRITE, 'cleanup_batch');
+      } catch (formattedError: any) {
+        setError(formattedError.message || 'An error occurred during cleanup');
+      }
     } finally {
       setLoading(false);
     }

@@ -87,6 +87,7 @@ service cloud.firestore {
       allow read: if isAuthenticated();
       allow create: if isAuthenticated() && isOwner(userId) && isValidUserProfile(request.resource.data);
       allow update: if isAuthenticated() && (isOwner(userId) || isAdmin()) && isValidUserProfile(request.resource.data);
+      allow delete: if isAdmin();
     }
 
     match /buses/{busId} {

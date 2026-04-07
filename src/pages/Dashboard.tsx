@@ -159,11 +159,11 @@ export function Dashboard() {
 
     // Calculate KPIs
     const totalCollections = currentRecords.reduce((sum, r: any) => 
-      sum + (r.school_morning || 0) + (r.school_evening || 0) + (r.charter_morning || 0) + (r.charter_evening || 0) + (r.private_booking || 0) - (r.booking_expense || 0), 0) +
+      sum + (r.school_morning || 0) + (r.school_evening || 0) + (r.charter_morning || 0) + (r.charter_evening || 0) + (r.private_booking || 0), 0) +
       currentFeeCollections.reduce((sum, f: any) => sum + (f.amount || 0), 0);
     
     const dailyFuel = currentRecords.reduce((sum, r: any) => sum + (r.fuel_amount || 0), 0);
-    const dailyDuty = currentRecords.reduce((sum, r: any) => sum + (r.duty_paid || 0), 0);
+    const dailyDuty = currentRecords.reduce((sum, r: any) => sum + (r.driver_duty_paid || 0) + (r.helper_duty_paid || 0), 0);
     const otherBusExpenses = currentBusExpenses.reduce((sum, e: any) => sum + (e.amount || 0), 0);
     const totalBusExpenses = dailyFuel + dailyDuty + otherBusExpenses;
 
@@ -184,10 +184,10 @@ export function Dashboard() {
       const busExp = currentBusExpenses.filter((e: any) => e.bus_id === bus.id);
       
       const collections = busRecords.reduce((sum, r: any) => 
-        sum + (r.school_morning || 0) + (r.school_evening || 0) + (r.charter_morning || 0) + (r.charter_evening || 0) + (r.private_booking || 0) - (r.booking_expense || 0), 0);
+        sum + (r.school_morning || 0) + (r.school_evening || 0) + (r.charter_morning || 0) + (r.charter_evening || 0) + (r.private_booking || 0), 0);
       
       const fuel = busRecords.reduce((sum, r: any) => sum + (r.fuel_amount || 0), 0);
-      const duty = busRecords.reduce((sum, r: any) => sum + (r.duty_paid || 0), 0);
+      const duty = busRecords.reduce((sum, r: any) => sum + (r.driver_duty_paid || 0) + (r.helper_duty_paid || 0), 0);
       const other = busExp.reduce((sum, e: any) => sum + (e.amount || 0), 0);
 
       return {
@@ -221,10 +221,9 @@ export function Dashboard() {
       const school = rs.reduce((sum, r: any) => sum + (r.school_morning || 0) + (r.school_evening || 0), 0);
       const charter = rs.reduce((sum, r: any) => sum + (r.charter_morning || 0) + (r.charter_evening || 0), 0);
       const private_booking = rs.reduce((sum, r: any) => sum + (r.private_booking || 0), 0);
-      const booking_exp = rs.reduce((sum, r: any) => sum + (r.booking_expense || 0), 0);
       const fees = fc.reduce((sum, f: any) => sum + (f.amount || 0), 0);
 
-      const totalExp = rs.reduce((sum, r: any) => sum + (r.fuel_amount || 0) + (r.duty_paid || 0), 0) + 
+      const totalExp = rs.reduce((sum, r: any) => sum + (r.fuel_amount || 0) + (r.driver_duty_paid || 0) + (r.helper_duty_paid || 0), 0) + 
                        be.reduce((sum, e: any) => sum + (e.amount || 0), 0) + 
                        ce.reduce((sum, e: any) => sum + (e.amount || 0), 0);
 
@@ -232,7 +231,7 @@ export function Dashboard() {
         name: format(month, 'MMM'),
         school,
         charter,
-        private: private_booking - booking_exp + fees,
+        private: private_booking + fees,
         totalExpenses: totalExp
       };
     });
@@ -272,7 +271,7 @@ export function Dashboard() {
       return {
         date: r.date,
         bus: bus?.registration_number,
-        amount: (r.school_morning || 0) + (r.school_evening || 0) + (r.charter_morning || 0) + (r.charter_evening || 0) + (r.private_booking || 0) - (r.booking_expense || 0),
+        amount: (r.school_morning || 0) + (r.school_evening || 0) + (r.charter_morning || 0) + (r.charter_evening || 0) + (r.private_booking || 0),
         type: 'Collection'
       };
     });

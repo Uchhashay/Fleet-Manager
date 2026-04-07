@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { db } from '../lib/firebase';
 import { doc, getDoc, collection, query, where, getDocs, orderBy } from 'firebase/firestore';
-import { Staff, DailyRecord, Bus } from '../types';
+import { Staff, DailyRecord, Bus, CashTransaction } from '../types';
 import { formatCurrency, cn } from '../lib/utils';
 import { 
   User, 
@@ -12,11 +12,12 @@ import {
   Wallet, 
   Activity, 
   ChevronLeft,
-  Clock,
   Briefcase,
   ArrowUpRight,
   PieChart,
-  History
+  History,
+  CheckCircle2,
+  AlertCircle
 } from 'lucide-react';
 import { format, startOfMonth, endOfMonth, subMonths } from 'date-fns';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -26,6 +27,7 @@ export function DriverPerformance() {
   const [staff, setStaff] = useState<Staff | null>(null);
   const [buses, setBuses] = useState<Bus[]>([]);
   const [records, setRecords] = useState<DailyRecord[]>([]);
+  const [cashTransactions, setCashTransactions] = useState<CashTransaction[]>([]);
   const [loading, setLoading] = useState(true);
   const [dateRange, setDateRange] = useState({
     start: format(startOfMonth(new Date()), 'yyyy-MM-dd'),
@@ -41,7 +43,7 @@ export function DriverPerformance() {
   async function fetchData() {
     setLoading(true);
     try {
-      const [staffSnap, busesSnap, recordsSnap] = await Promise.all([
+      const [staffSnap, busesSnap, recordsSnap, cashSnap] = await Promise.all([
         getDoc(doc(db, 'staff', id!)),
         getDocs(collection(db, 'buses')),
         getDocs(query(
@@ -49,6 +51,13 @@ export function DriverPerformance() {
           where('date', '>=', dateRange.start),
           where('date', '<=', dateRange.end),
           orderBy('date', 'desc')
+        )),
+        getDocs(query(
+          collection(db, 'cash_transactions'),
+          where('date', '>=', dateRange.start),
+          where('date', '<=', dateRange.end),
+          where('staff_id', '==', id),
+          where('category', '==', 'salary')
         ))
       ]);
 
@@ -62,6 +71,8 @@ export function DriverPerformance() {
       // Filter records where this staff was either driver or helper
       const filteredRecords = allRecords.filter(r => r.driver_id === id || r.helper_id === id);
       setRecords(filteredRecords);
+
+      setCashTransactions(cashSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as CashTransaction)));
 
     } catch (error) {
       console.error('Error fetching performance data:', error);
@@ -85,12 +96,23 @@ export function DriverPerformance() {
 
   // Stats Calculations
   const totalDays = records.length;
-  const totalDuty = records.reduce((sum, r) => sum + (r.duty_paid || 0), 0);
+  const totalPayable = records.reduce((sum, r) => {
+    if (r.driver_id === id) return sum + (r.driver_duty_payable || 0);
+    if (r.helper_id === id) return sum + (r.helper_duty_payable || 0);
+    return sum;
+  }, 0);
+  const totalPaid = records.reduce((sum, r) => {
+    if (r.driver_id === id) return sum + (r.driver_duty_paid || 0);
+    if (r.helper_id === id) return sum + (r.helper_duty_paid || 0);
+    return sum;
+  }, 0) + cashTransactions.reduce((sum, t) => sum + (t.amount || 0), 0);
+  const balance = totalPayable - totalPaid;
+
   const totalCollections = records.reduce((sum, r) => {
     const revenue = (r.school_morning || 0) + (r.school_evening || 0) + 
                     (r.charter_morning || 0) + (r.charter_evening || 0) + 
                     (r.private_booking || 0);
-    return sum + revenue - (r.booking_expense || 0);
+    return sum + revenue;
   }, 0);
 
   const daysPerBus = records.reduce((acc, r) => {
@@ -163,9 +185,9 @@ export function DriverPerformance() {
       <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
         {[
           { label: 'Days Worked', value: totalDays, icon: Activity, color: 'text-primary' },
-          { label: 'Duty Earned', value: formatCurrency(totalDuty), icon: Wallet, color: 'text-success' },
-          { label: 'Collections', value: formatCurrency(totalCollections), icon: TrendingUp, color: 'text-accent' },
-          { label: 'Avg / Shift', value: formatCurrency(totalCollections / (totalDays || 1)), icon: ArrowUpRight, color: 'text-warning' },
+          { label: 'Total Payable', value: formatCurrency(totalPayable), icon: Wallet, color: 'text-primary' },
+          { label: 'Total Paid', value: formatCurrency(totalPaid), icon: CheckCircle2, color: 'text-success' },
+          { label: 'Balance Due', value: formatCurrency(balance), icon: AlertCircle, color: balance > 0 ? 'text-danger' : 'text-success' },
         ].map((stat, idx) => (
           <motion.div 
             key={stat.label}
@@ -264,7 +286,9 @@ export function DriverPerformance() {
                 <th>Date</th>
                 <th>Bus</th>
                 <th>Trip Details</th>
-                <th className="text-right">Duty Paid</th>
+                <th className="text-right">Payable</th>
+                <th className="text-right">Paid</th>
+                <th className="text-right">Balance</th>
                 <th className="text-right">Collection</th>
               </tr>
             </thead>
@@ -273,7 +297,10 @@ export function DriverPerformance() {
                 const bus = buses.find(b => b.id === record.bus_id);
                 const shiftCollection = (record.school_morning || 0) + (record.school_evening || 0) + 
                                    (record.charter_morning || 0) + (record.charter_evening || 0) + 
-                                   (record.private_booking || 0) - (record.booking_expense || 0);
+                                   (record.private_booking || 0);
+                const dutyPayable = record.driver_id === id ? (record.driver_duty_payable || 0) : (record.helper_duty_payable || 0);
+                const dutyPaid = record.driver_id === id ? (record.driver_duty_paid || 0) : (record.helper_duty_paid || 0);
+                const shiftBalance = dutyPayable - dutyPaid;
                 return (
                   <motion.tr 
                     key={record.id}
@@ -296,7 +323,11 @@ export function DriverPerformance() {
                         {record.private_booking > 0 && <span className="badge bg-success/5 text-success text-[9px]">Priv</span>}
                       </div>
                     </td>
-                    <td className="text-right font-bold text-primary font-mono">{formatCurrency(record.duty_paid)}</td>
+                    <td className="text-right font-bold text-primary font-mono">{formatCurrency(dutyPayable)}</td>
+                    <td className="text-right font-bold text-success font-mono">{formatCurrency(dutyPaid)}</td>
+                    <td className={cn("text-right font-bold font-mono", shiftBalance > 0 ? "text-danger" : "text-success")}>
+                      {formatCurrency(shiftBalance)}
+                    </td>
                     <td className="text-right font-bold text-accent font-mono">{formatCurrency(shiftCollection)}</td>
                   </motion.tr>
                 );

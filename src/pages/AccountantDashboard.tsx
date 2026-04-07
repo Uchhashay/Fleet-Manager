@@ -12,14 +12,17 @@ import {
   FileText,
   History,
   Bus as BusIcon,
-  LayoutDashboard
+  LayoutDashboard,
+  Users
 } from 'lucide-react';
 import { formatCurrency, cn } from '../lib/utils';
-import { DailyRecord, BusExpense, CompanyExpense, CashTransaction } from '../types';
+import { DailyRecord, BusExpense, CompanyExpense, CashTransaction, Staff } from '../types';
 import { Link } from 'react-router-dom';
-import { motion } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
+import { useAuth } from '../contexts/AuthContext';
 
 export function AccountantDashboard() {
+  const { profile } = useAuth();
   const [stats, setStats] = useState({
     totalCollections: 0,
     totalExpenses: 0,
@@ -28,10 +31,48 @@ export function AccountantDashboard() {
   });
   const [recentRecords, setRecentRecords] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [accountants, setAccountants] = useState<Staff[]>([]);
+  const [selectedAccountantId, setSelectedAccountantId] = useState<string>(auth.currentUser?.uid || '');
+  const [staffBalances, setStaffBalances] = useState<Record<string, number>>({});
 
   useEffect(() => {
-    fetchDashboardData();
-  }, []);
+    if (profile?.role === 'admin') {
+      fetchAccountants();
+    }
+  }, [profile]);
+
+  useEffect(() => {
+    if (selectedAccountantId) {
+      fetchDashboardData();
+    }
+  }, [selectedAccountantId]);
+
+  async function fetchAccountants() {
+    try {
+      const snap = await getDocs(query(collection(db, 'staff'), where('role', '==', 'accountant')));
+      const list = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Staff));
+      setAccountants(list);
+      
+      // Also fetch balances for all accountants to show in a summary
+      const balances: Record<string, number> = {};
+      for (const acc of list) {
+        const cashSnap = await getDocs(query(
+          collection(db, 'cash_transactions'),
+          where('created_by', '==', acc.id) // This assumes staff ID is same as auth UID, which it should be if linked
+        ));
+        let bal = 0;
+        cashSnap.docs.forEach(doc => {
+          const t = doc.data();
+          if (t.type === 'in') bal += t.amount;
+          else bal -= t.amount;
+        });
+        balances[acc.id] = bal;
+      }
+      setStaffBalances(balances);
+    } catch (error) {
+      console.error('Error fetching accountants:', error);
+    }
+  }
 
   async function fetchDashboardData() {
     setLoading(true);
@@ -39,53 +80,54 @@ export function AccountantDashboard() {
       const now = new Date();
       const monthStart = startOfMonth(now);
       const monthEnd = endOfMonth(now);
+      const targetUid = selectedAccountantId;
 
-      // Fetch Daily Records for the month (only for this accountant)
+      // Fetch Daily Records for the month (only for target accountant)
       const dailySnap = await getDocs(query(
         collection(db, 'daily_records'),
         where('date', '>=', format(monthStart, 'yyyy-MM-dd')),
         where('date', '<=', format(monthEnd, 'yyyy-MM-dd')),
-        where('created_by', '==', auth.currentUser?.uid)
+        where('created_by', '==', targetUid)
       ));
 
       let totalCollections = 0;
       let dailyExpenses = 0;
       dailySnap.docs.forEach(doc => {
         const data = doc.data() as DailyRecord;
-        totalCollections += (data.school_morning || 0) + (data.school_evening || 0) + (data.charter_morning || 0) + (data.school_evening || 0) + (data.private_booking || 0);
-        dailyExpenses += (data.fuel_amount || 0) + (data.duty_paid || 0);
+        totalCollections += (data.school_morning || 0) + (data.school_evening || 0) + (data.charter_morning || 0) + (data.charter_evening || 0) + (data.private_booking || 0);
+        dailyExpenses += (data.fuel_amount || 0) + (data.driver_duty_paid || 0) + (data.helper_duty_paid || 0);
       });
 
-      // Fetch Bus Expenses for the month (only for this accountant)
+      // Fetch Bus Expenses for the month (only for target accountant)
       const busExpSnap = await getDocs(query(
         collection(db, 'bus_expenses'),
         where('date', '>=', format(monthStart, 'yyyy-MM-dd')),
         where('date', '<=', format(monthEnd, 'yyyy-MM-dd')),
-        where('created_by', '==', auth.currentUser?.uid)
+        where('created_by', '==', targetUid)
       ));
       let busExpenses = 0;
       busExpSnap.docs.forEach(doc => {
         busExpenses += (doc.data() as BusExpense).amount || 0;
       });
 
-      // Fetch Company Expenses for the month (only for this accountant)
+      // Fetch Company Expenses for the month (only for target accountant)
       const compExpSnap = await getDocs(query(
         collection(db, 'company_expenses'),
         where('date', '>=', format(monthStart, 'yyyy-MM-dd')),
         where('date', '<=', format(monthEnd, 'yyyy-MM-dd')),
-        where('created_by', '==', auth.currentUser?.uid)
+        where('created_by', '==', targetUid)
       ));
       let companyExpenses = 0;
       compExpSnap.docs.forEach(doc => {
         companyExpenses += (doc.data() as CompanyExpense).amount || 0;
       });
 
-      // Fetch Fee Collections for the month (only for this accountant)
+      // Fetch Fee Collections for the month (only for target accountant)
       const feeSnap = await getDocs(query(
         collection(db, 'fee_collections'),
         where('date', '>=', Timestamp.fromDate(monthStart)),
         where('date', '<=', Timestamp.fromDate(monthEnd)),
-        where('recorded_by', '==', auth.currentUser?.uid)
+        where('recorded_by', '==', targetUid)
       ));
       let feeCollections = 0;
       feeSnap.docs.forEach(doc => {
@@ -95,10 +137,10 @@ export function AccountantDashboard() {
       totalCollections += feeCollections;
       const totalExpenses = dailyExpenses + busExpenses + companyExpenses;
 
-      // Fetch Accountant Cash Balance (only for this accountant)
+      // Fetch Accountant Cash Balance (only for target accountant)
       const cashSnap = await getDocs(query(
         collection(db, 'cash_transactions'),
-        where('created_by', '==', auth.currentUser?.uid)
+        where('created_by', '==', targetUid)
       ));
       let accountantCash = 0;
       cashSnap.docs.forEach(doc => {
@@ -107,10 +149,10 @@ export function AccountantDashboard() {
         else accountantCash -= t.amount;
       });
 
-      // Fetch recent cash transactions (only for this accountant)
+      // Fetch recent cash transactions (only for target accountant)
       const recentSnap = await getDocs(query(
         collection(db, 'cash_transactions'),
-        where('created_by', '==', auth.currentUser?.uid),
+        where('created_by', '==', targetUid),
         orderBy('date', 'desc'),
         orderBy('created_at', 'desc'),
         limit(5)
@@ -150,13 +192,55 @@ export function AccountantDashboard() {
           <LayoutDashboard className="h-4 w-4 stroke-[1.5px]" />
           <span className="text-[10px] font-bold uppercase tracking-[0.2em]">Accountant Portal</span>
         </div>
-        <div className="flex items-center justify-between">
+        <div className="flex flex-col space-y-4 sm:flex-row sm:items-center sm:justify-between sm:space-y-0">
           <h1 className="text-3xl font-bold tracking-tight text-primary">Accountant Dashboard</h1>
-          <div className="text-xs font-medium text-secondary bg-surface px-3 py-1.5 rounded-full border border-border">
-            {format(new Date(), 'MMMM yyyy')}
+          
+          <div className="flex items-center space-x-4">
+            {profile?.role === 'admin' && (
+              <div className="flex items-center space-x-2 bg-surface border border-border rounded-xl px-3 py-1.5 shadow-sm">
+                <span className="text-[10px] font-bold uppercase tracking-widest text-secondary">View As:</span>
+                <select 
+                  value={selectedAccountantId}
+                  onChange={(e) => setSelectedAccountantId(e.target.value)}
+                  className="bg-transparent border-none text-xs font-bold text-accent focus:ring-0 cursor-pointer"
+                >
+                  <option value={auth.currentUser?.uid}>Me (Admin)</option>
+                  {accountants.map(acc => (
+                    <option key={acc.id} value={acc.id}>{acc.full_name}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+            <div className="text-xs font-medium text-secondary bg-surface px-3 py-1.5 rounded-full border border-border">
+              {format(new Date(), 'MMMM yyyy')}
+            </div>
           </div>
         </div>
       </header>
+
+      {profile?.role === 'admin' && (
+        <div className="space-y-6">
+          <div className="flex items-center space-x-2">
+            <Users className="h-4 w-4 text-secondary" />
+            <h3 className="text-sm font-bold text-primary tracking-tight">Accountant Cash Balances</h3>
+          </div>
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            {accountants.map(acc => (
+              <button
+                key={acc.id}
+                onClick={() => setSelectedAccountantId(acc.id)}
+                className={cn(
+                  "card text-left transition-all",
+                  selectedAccountantId === acc.id ? "border-accent ring-1 ring-accent" : "hover:border-accent/30"
+                )}
+              >
+                <p className="text-[10px] font-bold uppercase tracking-widest text-secondary mb-2">{acc.full_name}</p>
+                <p className="text-xl font-bold font-mono tracking-tighter text-primary">{formatCurrency(staffBalances[acc.id] || 0)}</p>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div className="grid gap-6 sm:grid-cols-3">
         <motion.div 

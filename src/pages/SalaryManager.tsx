@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { db } from '../lib/firebase';
 import { collection, getDocs, query, where, orderBy, setDoc, doc, serverTimestamp, addDoc } from 'firebase/firestore';
-import { Staff, SalaryRecord } from '../types';
+import { Staff, SalaryRecord, CashTransaction } from '../types';
 import { formatCurrency, cn } from '../lib/utils';
 import { Save, CheckCircle2, AlertCircle, ChevronLeft, ChevronRight, Calculator, Calendar, User, Briefcase, Clock, Wallet } from 'lucide-react';
 import { format, startOfMonth, endOfMonth, subMonths } from 'date-fns';
@@ -26,15 +26,22 @@ export function SalaryManager() {
       const end = format(endOfMonth(currentMonth), 'yyyy-MM-dd');
       const monthStr = format(currentMonth, 'yyyy-MM');
 
-      const [staffSnap, recordsSnap, salariesSnap] = await Promise.all([
+      const [staffSnap, recordsSnap, salariesSnap, cashSnap] = await Promise.all([
         getDocs(query(collection(db, 'staff'), orderBy('full_name'))),
         getDocs(query(collection(db, 'daily_records'), where('date', '>=', start), where('date', '<=', end))),
-        getDocs(query(collection(db, 'salary_records'), where('month', '==', monthStr)))
+        getDocs(query(collection(db, 'salary_records'), where('month', '==', monthStr))),
+        getDocs(query(
+          collection(db, 'cash_transactions'), 
+          where('date', '>=', start), 
+          where('date', '<=', end),
+          where('category', '==', 'salary')
+        ))
       ]);
 
       const staffList = staffSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Staff));
       const recordsList = recordsSnap.docs.map(doc => doc.data());
       const salariesList = salariesSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as SalaryRecord));
+      const cashList = cashSnap.docs.map(doc => doc.data() as CashTransaction);
 
       setStaff(staffList);
 
@@ -44,27 +51,38 @@ export function SalaryManager() {
         const staffRecords = recordsList.filter(r => 
           (r.driver_id === s.id || r.helper_id === s.id) && !r.is_holiday
         );
+        const staffCash = cashList.filter(t => t.staff_id === s.id);
+
         const workingDays = staffRecords.length || 0;
-        const totalOT = staffRecords.reduce((sum, r) => sum + (r.overtime || 0), 0);
+
+        const totalPayableDuty = staffRecords.reduce((sum, r) => {
+          if (r.driver_id === s.id) return sum + (r.driver_duty_payable || 0);
+          if (r.helper_id === s.id) return sum + (r.helper_duty_payable || 0);
+          return sum;
+        }, 0);
+
+        const totalPaidDuty = staffRecords.reduce((sum, r) => {
+          if (r.driver_id === s.id) return sum + (r.driver_duty_paid || 0);
+          if (r.helper_id === s.id) return sum + (r.helper_duty_paid || 0);
+          return sum;
+        }, 0);
+
+        const totalCashPaid = staffCash.reduce((sum, t) => sum + (t.amount || 0), 0);
 
         const existingSalary = salariesList.find(sal => sal.staff_id === s.id);
 
         if (existingSalary) {
           newSalaries[s.id] = existingSalary;
         } else {
-          const dutyAmount = workingDays * s.duty_rate;
-          const otAmount = totalOT * s.ot_rate;
           newSalaries[s.id] = {
             staff_id: s.id,
             month: monthStr,
             working_days: workingDays,
-            duty_amount: dutyAmount,
+            duty_amount: totalPayableDuty,
             fixed_salary: s.fixed_salary,
-            ot_hours: totalOT,
-            ot_amount: otAmount,
-            advance: 0,
+            advance: totalPaidDuty + totalCashPaid, // Daily paid duty + manual cash payments
             deductions: 0,
-            net_payable: s.fixed_salary + dutyAmount + otAmount,
+            net_payable: (s.fixed_salary || 0) + totalPayableDuty - (totalPaidDuty + totalCashPaid),
             status: 'pending'
           };
         }
@@ -102,8 +120,8 @@ export function SalaryManager() {
         created_at: serverTimestamp()
       });
 
-      // If marked as paid, record a cash transaction
-      if (salary.status === 'paid') {
+      // If marked as paid, record a cash transaction for any remaining balance
+      if (salary.status === 'paid' && (salary.net_payable || 0) > 0) {
         const existingTx = await getDocs(query(
           collection(db, 'cash_transactions'),
           where('linked_id', '==', recordId)
@@ -215,7 +233,7 @@ export function SalaryManager() {
                   </div>
                 </div>
 
-                <div className="grid grid-cols-2 gap-6 sm:grid-cols-3 lg:grid-cols-6 lg:gap-12">
+                <div className="grid grid-cols-2 gap-6 sm:grid-cols-2 lg:grid-cols-4 lg:gap-12">
                   <div className="space-y-1">
                     <p className="text-[9px] font-bold text-secondary uppercase tracking-widest">Working Days</p>
                     <p className="font-bold text-primary font-mono">{salary.working_days}</p>
@@ -223,14 +241,6 @@ export function SalaryManager() {
                   <div className="space-y-1">
                     <p className="text-[9px] font-bold text-secondary uppercase tracking-widest">Duty Amount</p>
                     <p className="font-bold text-primary font-mono">{formatCurrency(salary.duty_amount || 0)}</p>
-                  </div>
-                  <div className="space-y-1">
-                    <p className="text-[9px] font-bold text-secondary uppercase tracking-widest">OT (Hrs)</p>
-                    <p className="font-bold text-primary font-mono">{salary.ot_hours || 0}</p>
-                  </div>
-                  <div className="space-y-1">
-                    <p className="text-[9px] font-bold text-secondary uppercase tracking-widest">OT Amount</p>
-                    <p className="font-bold text-primary font-mono">{formatCurrency(salary.ot_amount || 0)}</p>
                   </div>
                   <div className="space-y-1">
                     <p className="text-[9px] font-bold text-secondary uppercase tracking-widest">Fixed Salary</p>

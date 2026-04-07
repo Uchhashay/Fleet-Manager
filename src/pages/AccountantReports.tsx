@@ -19,7 +19,7 @@ import {
   ChevronRight
 } from 'lucide-react';
 import { formatCurrency, cn } from '../lib/utils';
-import { DailyRecord, BusExpense, CompanyExpense, Bus } from '../types';
+import { DailyRecord, BusExpense, CompanyExpense, Bus, CashTransaction } from '../types';
 import { motion, AnimatePresence } from 'framer-motion';
 
 import { useAuth } from '../contexts/AuthContext';
@@ -116,13 +116,28 @@ export function AccountantReports() {
         feeCollectionsTotal += doc.data().amount || 0;
       });
 
+      // Fetch Cash Transactions (Salary/Misc)
+      let cashQuery = query(
+        collection(db, 'cash_transactions'),
+        where('date', '>=', start),
+        where('date', '<=', end)
+      );
+      if (profile?.role === 'accountant') {
+        cashQuery = query(cashQuery, where('created_by', '==', auth.currentUser?.uid));
+      }
+      const cashSnap = await getDocs(cashQuery);
+      const cashTransactions = cashSnap.docs.map(doc => doc.data() as CashTransaction);
+      const manualSalaryTotal = cashTransactions.filter(t => t.category === 'salary').reduce((sum, t) => sum + (t.amount || 0), 0);
+      const miscExpensesTotal = cashTransactions.filter(t => t.type === 'out' && t.category !== 'salary' && t.category !== 'bus_expense').reduce((sum, t) => sum + (t.amount || 0), 0);
+      const miscIncomeTotal = cashTransactions.filter(t => t.type === 'in' && t.category !== 'fee_collection').reduce((sum, t) => sum + (t.amount || 0), 0);
+
       const reports: BusReport[] = buses.map(bus => {
         const busDaily = dailyRecords.filter(r => r.bus_id === bus.id);
         const busExp = busExpenses.filter(e => e.bus_id === bus.id);
 
         const collectionTotal = busDaily.reduce((sum, r) => sum + (r.school_morning || 0) + (r.school_evening || 0) + (r.charter_morning || 0) + (r.charter_evening || 0) + (r.private_booking || 0), 0);
         const fuelTotal = busDaily.reduce((sum, r) => sum + (r.fuel_amount || 0), 0);
-        const dutyTotal = busDaily.reduce((sum, r) => sum + (r.duty_paid || 0), 0);
+        const dutyTotal = busDaily.reduce((sum, r) => sum + (r.driver_duty_paid || 0) + (r.helper_duty_paid || 0), 0);
         const maintenanceTotal = busExp.filter(e => e.category === 'maintenance_repairs').reduce((sum, e) => sum + (e.amount || 0), 0);
         const otherBusExp = busExp.filter(e => e.category !== 'maintenance_repairs').reduce((sum, e) => sum + (e.amount || 0), 0);
 
@@ -139,9 +154,9 @@ export function AccountantReports() {
         };
       });
 
-      const totalCollection = reports.reduce((sum, r) => sum + r.collection, 0) + feeCollectionsTotal;
+      const totalCollection = reports.reduce((sum, r) => sum + r.collection, 0) + feeCollectionsTotal + miscIncomeTotal;
       const totalFuel = reports.reduce((sum, r) => sum + r.fuel, 0);
-      const totalDuty = reports.reduce((sum, r) => sum + r.duty, 0);
+      const totalDuty = reports.reduce((sum, r) => sum + r.duty, 0) + manualSalaryTotal;
       const totalMaintenance = reports.reduce((sum, r) => sum + r.maintenance, 0);
       
       setSummary({
@@ -149,8 +164,8 @@ export function AccountantReports() {
         totalFuel,
         totalDuty,
         totalMaintenance,
-        companyExpenses: companyExpensesTotal,
-        netProfit: totalCollection - (totalFuel + totalDuty + totalMaintenance + companyExpensesTotal)
+        companyExpenses: companyExpensesTotal + miscExpensesTotal,
+        netProfit: totalCollection - (totalFuel + totalDuty + totalMaintenance + companyExpensesTotal + miscExpensesTotal)
       });
       setBusReports(reports);
     } catch (error) {

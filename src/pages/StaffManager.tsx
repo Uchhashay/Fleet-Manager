@@ -16,8 +16,7 @@ export function StaffManager() {
     full_name: '',
     role: 'driver' as 'driver' | 'helper',
     fixed_salary: 0,
-    duty_rate: 0,
-    ot_rate: 0
+    duty_rate: 0
   });
 
   useEffect(() => {
@@ -44,8 +43,7 @@ export function StaffManager() {
         full_name: s.full_name,
         role: s.role,
         fixed_salary: s.fixed_salary,
-        duty_rate: s.duty_rate,
-        ot_rate: s.ot_rate || 0
+        duty_rate: s.duty_rate || 0
       });
     } else {
       setEditingStaff(null);
@@ -53,8 +51,7 @@ export function StaffManager() {
         full_name: '',
         role: 'driver',
         fixed_salary: 0,
-        duty_rate: 0,
-        ot_rate: 0
+        duty_rate: 0
       });
     }
     setIsModalOpen(true);
@@ -159,7 +156,7 @@ export function StaffManager() {
                 </div>
               </div>
 
-              <div className="mt-8 grid grid-cols-3 gap-4 border-t border-border pt-6">
+              <div className="mt-8 grid grid-cols-2 gap-4 border-t border-border pt-6">
                 <div className="space-y-1">
                   <div className="flex items-center space-x-1 text-secondary">
                     <IndianRupee className="h-2.5 w-2.5" />
@@ -172,14 +169,7 @@ export function StaffManager() {
                     <Briefcase className="h-2.5 w-2.5" />
                     <p className="text-[9px] font-bold uppercase tracking-wider">Duty</p>
                   </div>
-                  <p className="font-bold text-primary font-mono text-sm">{formatCurrency(s.duty_rate)}</p>
-                </div>
-                <div className="space-y-1">
-                  <div className="flex items-center space-x-1 text-secondary">
-                    <Clock className="h-2.5 w-2.5" />
-                    <p className="text-[9px] font-bold uppercase tracking-wider">OT/hr</p>
-                  </div>
-                  <p className="font-bold text-primary font-mono text-sm">{formatCurrency(s.ot_rate || 0)}</p>
+                  <p className="font-bold text-primary font-mono text-sm">{formatCurrency(s.duty_rate || 0)}</p>
                 </div>
               </div>
             </motion.div>
@@ -253,7 +243,7 @@ export function StaffManager() {
                   </div>
                 </div>
 
-                <div className="grid grid-cols-3 gap-4">
+                <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <label className="label">Fixed</label>
                     <input
@@ -268,20 +258,10 @@ export function StaffManager() {
                     <label className="label">Duty</label>
                     <input
                       type="number"
-                      required
                       value={formData.duty_rate || ''}
                       onChange={(e) => setFormData({ ...formData, duty_rate: parseInt(e.target.value) || 0 })}
                       className="input text-sm font-mono"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <label className="label">OT/hr</label>
-                    <input
-                      type="number"
-                      required
-                      value={formData.ot_rate || ''}
-                      onChange={(e) => setFormData({ ...formData, ot_rate: parseInt(e.target.value) || 0 })}
-                      className="input text-sm font-mono"
+                      placeholder="Optional"
                     />
                   </div>
                 </div>
