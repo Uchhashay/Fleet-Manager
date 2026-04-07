@@ -8,16 +8,44 @@ import { Download, ChevronLeft, ChevronRight, Calendar as CalendarIcon, Table as
 import { format, startOfMonth, endOfMonth, eachDayOfInterval, isSameDay, startOfWeek, endOfWeek } from 'date-fns';
 import { motion, AnimatePresence } from 'framer-motion';
 
+import { useSearchParams } from 'react-router-dom';
+
 export function MonthlyView() {
+  const [searchParams] = useSearchParams();
   const [records, setRecords] = useState<DailyRecord[]>([]);
   const [buses, setBuses] = useState<Bus[]>([]);
-  const [selectedBus, setSelectedBus] = useState<string>('');
-  const [currentMonth, setCurrentMonth] = useState(new Date());
+  const [selectedBus, setSelectedBus] = useState<string>(searchParams.get('busId') || 'all');
+  const [currentMonth, setCurrentMonth] = useState(
+    searchParams.get('month') ? new Date(searchParams.get('month')!) : new Date()
+  );
   const [loading, setLoading] = useState(true);
   const [busesLoading, setBusesLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const [viewMode, setViewMode] = useState<'table' | 'calendar'>('table');
+  const [visibleColumns, setVisibleColumns] = useState<Set<string>>(new Set([
+    'school_staff', 'charter_office', 'private', 'net_coll', 'net_exp', 'balance'
+  ]));
+  const [isColumnSelectorOpen, setIsColumnSelectorOpen] = useState(false);
+
+  const toggleColumn = (col: string) => {
+    const next = new Set(visibleColumns);
+    if (next.has(col)) {
+      if (next.size > 1) next.delete(col);
+    } else {
+      next.add(col);
+    }
+    setVisibleColumns(next);
+  };
+
+  const columns = [
+    { id: 'school_staff', label: 'School Staff' },
+    { id: 'charter_office', label: 'Charter/Office' },
+    { id: 'private', label: 'Private' },
+    { id: 'net_coll', label: 'Net Collection' },
+    { id: 'net_exp', label: 'Net Expense' },
+    { id: 'balance', label: 'Balance' },
+  ];
 
   useEffect(() => {
     fetchBuses();
@@ -33,8 +61,6 @@ export function MonthlyView() {
       const busesSnap = await getDocs(query(collection(db, 'buses'), orderBy('registration_number')));
       const busesList = busesSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Bus));
       setBuses(busesList);
-      // Default to 'all' instead of first bus
-      setSelectedBus('all');
     } catch (err) {
       console.error('Error fetching buses:', err);
       setError('Failed to load buses. Please check your connection.');
@@ -237,6 +263,51 @@ export function MonthlyView() {
             <Filter className="absolute right-3.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-secondary stroke-[1.5px] pointer-events-none" />
           </div>
 
+          <div className="relative">
+            <button 
+              onClick={() => setIsColumnSelectorOpen(!isColumnSelectorOpen)}
+              className="btn-secondary flex items-center space-x-2 !py-2.5"
+            >
+              <LayoutGrid className="h-4 w-4 stroke-[1.5px]" />
+              <span>Columns</span>
+            </button>
+            
+            <AnimatePresence>
+              {isColumnSelectorOpen && (
+                <>
+                  <div 
+                    className="fixed inset-0 z-20" 
+                    onClick={() => setIsColumnSelectorOpen(false)}
+                  />
+                  <motion.div 
+                    initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={{ opacity: 0, y: 10, scale: 0.95 }}
+                    className="absolute right-0 top-full mt-2 z-30 w-56 bg-surface border border-border rounded-xl shadow-xl p-2"
+                  >
+                    <div className="space-y-1">
+                      {columns.map(col => (
+                        <button
+                          key={col.id}
+                          onClick={() => toggleColumn(col.id)}
+                          className={cn(
+                            "w-full flex items-center justify-between px-3 py-2 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-colors",
+                            visibleColumns.has(col.id) ? "bg-accent/10 text-accent" : "text-secondary hover:bg-surface/50"
+                          )}
+                        >
+                          <span>{col.label}</span>
+                          {visibleColumns.has(col.id) && (
+                            <div className="h-1.5 w-1.5 rounded-full bg-accent" />
+                          )}
+                        </button>
+                      ))}
+                    </div>
+                  </motion.div>
+                </>
+              )}
+            </AnimatePresence>
+          </div>
+
           <button
             onClick={exportToCSV}
             className="btn-secondary flex items-center space-x-2 !py-2.5"
@@ -260,23 +331,43 @@ export function MonthlyView() {
                 <thead>
                   <tr className="bg-surface/50 border-b border-border">
                     <th className="sticky left-0 z-10 bg-surface px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-secondary">Date</th>
-                    <th className="px-6 py-4 text-center text-[10px] font-bold uppercase tracking-widest text-secondary border-x border-border/30" colSpan={2}>School Staff</th>
-                    <th className="px-6 py-4 text-center text-[10px] font-bold uppercase tracking-widest text-secondary border-x border-border/30" colSpan={2}>Charter/Office</th>
-                    <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-secondary">Private</th>
-                    <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-secondary">Net Coll.</th>
-                    <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-secondary">Net Exp.</th>
-                    <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-secondary">Balance</th>
+                    {visibleColumns.has('school_staff') && (
+                      <th className="px-6 py-4 text-center text-[10px] font-bold uppercase tracking-widest text-secondary border-x border-border/30" colSpan={2}>School Staff</th>
+                    )}
+                    {visibleColumns.has('charter_office') && (
+                      <th className="px-6 py-4 text-center text-[10px] font-bold uppercase tracking-widest text-secondary border-x border-border/30" colSpan={2}>Charter/Office</th>
+                    )}
+                    {visibleColumns.has('private') && (
+                      <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-secondary">Private</th>
+                    )}
+                    {visibleColumns.has('net_coll') && (
+                      <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-secondary">Net Coll.</th>
+                    )}
+                    {visibleColumns.has('net_exp') && (
+                      <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-secondary">Net Exp.</th>
+                    )}
+                    {visibleColumns.has('balance') && (
+                      <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-secondary">Balance</th>
+                    )}
                   </tr>
                   <tr className="bg-surface/30 border-b border-border text-[9px] font-bold uppercase tracking-widest text-secondary/60">
                     <th className="sticky left-0 z-10 bg-surface px-6 py-2"></th>
-                    <th className="px-6 py-2 text-center border-x border-border/20">AM</th>
-                    <th className="px-6 py-2 text-center border-x border-border/20">PM</th>
-                    <th className="px-6 py-2 text-center border-x border-border/20">AM</th>
-                    <th className="px-6 py-2 text-center border-x border-border/20">PM</th>
-                    <th className="px-6 py-2"></th>
-                    <th className="px-6 py-2"></th>
-                    <th className="px-6 py-2"></th>
-                    <th className="px-6 py-2"></th>
+                    {visibleColumns.has('school_staff') && (
+                      <>
+                        <th className="px-6 py-2 text-center border-x border-border/20">AM</th>
+                        <th className="px-6 py-2 text-center border-x border-border/20">PM</th>
+                      </>
+                    )}
+                    {visibleColumns.has('charter_office') && (
+                      <>
+                        <th className="px-6 py-2 text-center border-x border-border/20">AM</th>
+                        <th className="px-6 py-2 text-center border-x border-border/20">PM</th>
+                      </>
+                    )}
+                    {visibleColumns.has('private') && <th className="px-6 py-2"></th>}
+                    {visibleColumns.has('net_coll') && <th className="px-6 py-2"></th>}
+                    {visibleColumns.has('net_exp') && <th className="px-6 py-2"></th>}
+                    {visibleColumns.has('balance') && <th className="px-6 py-2"></th>}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border/30">
@@ -305,26 +396,42 @@ export function MonthlyView() {
                         <td className="sticky left-0 z-10 bg-background px-6 py-4 font-mono text-xs group-hover:bg-accent/5 transition-colors border-r border-border/10">
                           {format(day, 'dd MMM')}
                         </td>
-                        <td className="px-6 py-4 text-center font-mono text-xs border-x border-border/10">{hasData ? school_morning : '-'}</td>
-                        <td className="px-6 py-4 text-center font-mono text-xs border-x border-border/10">{hasData ? school_evening : '-'}</td>
-                        <td className="px-6 py-4 text-center font-mono text-xs border-x border-border/10">{hasData ? charter_morning : '-'}</td>
-                        <td className="px-6 py-4 text-center font-mono text-xs border-x border-border/10">{hasData ? charter_evening : '-'}</td>
-                        <td className="px-6 py-4 font-mono text-xs">
-                          <div>{hasData ? private_booking : '-'}</div>
-                          {dayRecords.some(r => r.booking_details) && (
-                            <div className="text-[10px] text-secondary font-sans mt-0.5 max-w-[120px] truncate" title={dayRecords.map(r => r.booking_details).filter(Boolean).join(', ')}>
-                              {dayRecords.map(r => r.booking_details).filter(Boolean).join(', ')}
-                            </div>
-                          )}
-                        </td>
-                        <td className="px-6 py-4 font-mono text-xs font-bold text-primary">{hasData ? netCollection : '-'}</td>
-                        <td className="px-6 py-4 font-mono text-xs text-danger/70">{hasData ? netExpense : '-'}</td>
-                        <td className={cn(
-                          "px-6 py-4 font-mono text-xs font-bold",
-                          balance > 0 ? "text-success" : balance < 0 ? "text-danger" : ""
-                        )}>
-                          {hasData ? balance : '-'}
-                        </td>
+                        {visibleColumns.has('school_staff') && (
+                          <>
+                            <td className="px-6 py-4 text-center font-mono text-xs border-x border-border/10">{hasData ? school_morning : '-'}</td>
+                            <td className="px-6 py-4 text-center font-mono text-xs border-x border-border/10">{hasData ? school_evening : '-'}</td>
+                          </>
+                        )}
+                        {visibleColumns.has('charter_office') && (
+                          <>
+                            <td className="px-6 py-4 text-center font-mono text-xs border-x border-border/10">{hasData ? charter_morning : '-'}</td>
+                            <td className="px-6 py-4 text-center font-mono text-xs border-x border-border/10">{hasData ? charter_evening : '-'}</td>
+                          </>
+                        )}
+                        {visibleColumns.has('private') && (
+                          <td className="px-6 py-4 font-mono text-xs">
+                            <div>{hasData ? private_booking : '-'}</div>
+                            {dayRecords.some(r => r.booking_details) && (
+                              <div className="text-[10px] text-secondary font-sans mt-0.5 max-w-[120px] truncate" title={dayRecords.map(r => r.booking_details).filter(Boolean).join(', ')}>
+                                {dayRecords.map(r => r.booking_details).filter(Boolean).join(', ')}
+                              </div>
+                            )}
+                          </td>
+                        )}
+                        {visibleColumns.has('net_coll') && (
+                          <td className="px-6 py-4 font-mono text-xs font-bold text-primary">{hasData ? netCollection : '-'}</td>
+                        )}
+                        {visibleColumns.has('net_exp') && (
+                          <td className="px-6 py-4 font-mono text-xs text-danger/70">{hasData ? netExpense : '-'}</td>
+                        )}
+                        {visibleColumns.has('balance') && (
+                          <td className={cn(
+                            "px-6 py-4 font-mono text-xs font-bold",
+                            balance > 0 ? "text-success" : balance < 0 ? "text-danger" : ""
+                          )}>
+                            {hasData ? balance : '-'}
+                          </td>
+                        )}
                       </tr>
                     );
                   })}
@@ -332,19 +439,29 @@ export function MonthlyView() {
                 <tfoot className="bg-surface border-t-2 border-border font-bold text-primary">
                   <tr>
                     <td className="sticky left-0 z-10 bg-surface px-6 py-6 text-[10px] uppercase tracking-widest border-r border-border/10">Totals</td>
-                    <td className="px-6 py-6 text-center font-mono text-sm border-x border-border/20">{totals.school_morning}</td>
-                    <td className="px-6 py-6 text-center font-mono text-sm border-x border-border/20">{totals.school_evening}</td>
-                    <td className="px-6 py-6 text-center font-mono text-sm border-x border-border/20">{totals.charter_morning}</td>
-                    <td className="px-6 py-6 text-center font-mono text-sm border-x border-border/20">{totals.charter_evening}</td>
-                    <td className="px-6 py-6 font-mono text-sm">{totals.private_booking}</td>
-                    <td className="px-6 py-6 font-mono text-sm text-accent">{totalNetCollection}</td>
-                    <td className="px-6 py-6 font-mono text-sm text-danger">{totals.net_expense}</td>
-                    <td className={cn(
-                      "px-6 py-6 font-mono text-sm",
-                      totalNetCollection - totals.net_expense >= 0 ? "text-success" : "text-danger"
-                    )}>
-                      {totalNetCollection - totals.net_expense}
-                    </td>
+                    {visibleColumns.has('school_staff') && (
+                      <>
+                        <td className="px-6 py-6 text-center font-mono text-sm border-x border-border/20">{totals.school_morning}</td>
+                        <td className="px-6 py-6 text-center font-mono text-sm border-x border-border/20">{totals.school_evening}</td>
+                      </>
+                    )}
+                    {visibleColumns.has('charter_office') && (
+                      <>
+                        <td className="px-6 py-6 text-center font-mono text-sm border-x border-border/20">{totals.charter_morning}</td>
+                        <td className="px-6 py-6 text-center font-mono text-sm border-x border-border/20">{totals.charter_evening}</td>
+                      </>
+                    )}
+                    {visibleColumns.has('private') && <td className="px-6 py-6 font-mono text-sm">{totals.private_booking}</td>}
+                    {visibleColumns.has('net_coll') && <td className="px-6 py-6 font-mono text-sm text-accent">{totalNetCollection}</td>}
+                    {visibleColumns.has('net_exp') && <td className="px-6 py-6 font-mono text-sm text-danger">{totals.net_expense}</td>}
+                    {visibleColumns.has('balance') && (
+                      <td className={cn(
+                        "px-6 py-6 font-mono text-sm",
+                        totalNetCollection - totals.net_expense >= 0 ? "text-success" : "text-danger"
+                      )}>
+                        {totalNetCollection - totals.net_expense}
+                      </td>
+                    )}
                   </tr>
                 </tfoot>
               </table>

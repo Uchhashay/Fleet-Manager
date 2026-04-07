@@ -24,8 +24,11 @@ import { motion, AnimatePresence } from 'framer-motion';
 
 import { useAuth } from '../contexts/AuthContext';
 
+import { Link, useLocation } from 'react-router-dom';
+
 export function CashManager() {
   const { profile } = useAuth();
+  const location = useLocation();
   const [transactions, setTransactions] = useState<CashTransaction[]>([]);
   const [staff, setStaff] = useState<Staff[]>([]);
   const [loading, setLoading] = useState(true);
@@ -38,6 +41,18 @@ export function CashManager() {
     date: format(new Date(), 'yyyy-MM-dd'),
     staff_id: ''
   });
+
+  useEffect(() => {
+    const state = location.state as { action?: 'in' | 'out' };
+    if (state?.action) {
+      setActiveForm(state.action);
+      setFormData(prev => ({
+        ...prev,
+        type: state.action!,
+        category: state.action === 'in' ? 'owner_transfer' : 'overhead'
+      }));
+    }
+  }, [location.state]);
 
   const [stats, setStats] = useState({
     totalIn: 0,

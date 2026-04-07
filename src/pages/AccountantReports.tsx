@@ -34,8 +34,11 @@ interface BusReport {
   net: number;
 }
 
+import { Link, useNavigate } from 'react-router-dom';
+
 export function AccountantReports() {
   const { profile } = useAuth();
+  const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [month, setMonth] = useState(format(new Date(), 'yyyy-MM'));
   const [summary, setSummary] = useState({
@@ -327,7 +330,10 @@ export function AccountantReports() {
               </div>
 
               <div className="mt-6 pt-4 border-t border-border/50 flex items-center justify-end">
-                <button className="text-[10px] font-bold text-accent uppercase tracking-widest flex items-center space-x-1 hover:space-x-2 transition-all">
+                <button 
+                  onClick={() => navigate(`/monthly?busId=${report.busId}&month=${month}`)}
+                  className="text-[10px] font-bold text-accent uppercase tracking-widest flex items-center space-x-1 hover:space-x-2 transition-all"
+                >
                   <span>View Details</span>
                   <ChevronRight className="h-3 w-3 stroke-[2px]" />
                 </button>

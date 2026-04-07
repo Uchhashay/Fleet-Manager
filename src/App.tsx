@@ -87,7 +87,7 @@ export default function App() {
               </ProtectedRoute>
             } />
             <Route path="monthly" element={
-              <ProtectedRoute allowedRoles={['admin']}>
+              <ProtectedRoute allowedRoles={['admin', 'accountant']}>
                 <MonthlyView />
               </ProtectedRoute>
             } />

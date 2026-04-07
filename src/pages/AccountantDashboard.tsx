@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { db, auth } from '../lib/firebase';
-import { collection, query, where, getDocs, orderBy, limit, Timestamp } from 'firebase/firestore';
+import { collection, query, where, getDocs, orderBy, limit, Timestamp, onSnapshot } from 'firebase/firestore';
 import { format, startOfMonth, endOfMonth } from 'date-fns';
 import { 
   Wallet, 
@@ -13,10 +13,13 @@ import {
   History,
   Bus as BusIcon,
   LayoutDashboard,
-  Users
+  Users,
+  ArrowDownLeft,
+  ArrowUpRight,
+  GraduationCap
 } from 'lucide-react';
 import { formatCurrency, cn } from '../lib/utils';
-import { DailyRecord, BusExpense, CompanyExpense, CashTransaction, Staff } from '../types';
+import { DailyRecord, BusExpense, CompanyExpense, CashTransaction, Staff, Profile } from '../types';
 import { Link } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAuth } from '../contexts/AuthContext';
@@ -39,48 +42,67 @@ export function AccountantDashboard() {
   });
   const [recentRecords, setRecentRecords] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [accountants, setAccountants] = useState<Staff[]>([]);
+  const [accountants, setAccountants] = useState<Profile[]>([]);
   const [selectedAccountantId, setSelectedAccountantId] = useState<string>(auth.currentUser?.uid || '');
   const [staffBalances, setStaffBalances] = useState<Record<string, number>>({});
 
   useEffect(() => {
     if (profile?.role === 'admin') {
-      fetchAccountants();
+      // Listen to profiles
+      const qProfiles = query(collection(db, 'profiles'), where('role', '==', 'accountant'));
+      const unsubscribeProfiles = onSnapshot(qProfiles, (snap) => {
+        const profileList = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Profile));
+        
+        // Also fetch from staff collection to be safe
+        getDocs(query(collection(db, 'staff'), where('role', '==', 'accountant'))).then(staffSnap => {
+          const staffList = staffSnap.docs.map(doc => ({ 
+            id: doc.id, 
+            full_name: doc.data().full_name,
+            role: 'accountant' as any,
+            email: ''
+          } as Profile));
+
+          // Merge lists, avoiding duplicates by ID
+          const merged = [...profileList];
+          staffList.forEach(s => {
+            if (!merged.find(p => p.id === s.id)) {
+              merged.push(s);
+            }
+          });
+          
+          setAccountants(merged);
+          
+          // Fetch balances for all
+          merged.forEach(async (acc) => {
+            const cashSnap = await getDocs(query(
+              collection(db, 'cash_transactions'),
+              where('created_by', '==', acc.id)
+            ));
+            let bal = 0;
+            cashSnap.docs.forEach(doc => {
+              const t = doc.data();
+              if (t.type === 'in') bal += t.amount;
+              else bal -= t.amount;
+            });
+            setStaffBalances(prev => ({ ...prev, [acc.id]: bal }));
+          });
+        });
+      });
+      return () => unsubscribeProfiles();
     }
   }, [profile]);
+
+  useEffect(() => {
+    if (auth.currentUser?.uid && !selectedAccountantId) {
+      setSelectedAccountantId(auth.currentUser.uid);
+    }
+  }, [auth.currentUser]);
 
   useEffect(() => {
     if (selectedAccountantId) {
       fetchDashboardData();
     }
   }, [selectedAccountantId]);
-
-  async function fetchAccountants() {
-    try {
-      const snap = await getDocs(query(collection(db, 'staff'), where('role', '==', 'accountant')));
-      const list = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Staff));
-      setAccountants(list);
-      
-      // Also fetch balances for all accountants to show in a summary
-      const balances: Record<string, number> = {};
-      for (const acc of list) {
-        const cashSnap = await getDocs(query(
-          collection(db, 'cash_transactions'),
-          where('created_by', '==', acc.id) // This assumes staff ID is same as auth UID, which it should be if linked
-        ));
-        let bal = 0;
-        cashSnap.docs.forEach(doc => {
-          const t = doc.data();
-          if (t.type === 'in') bal += t.amount;
-          else bal -= t.amount;
-        });
-        balances[acc.id] = bal;
-      }
-      setStaffBalances(balances);
-    } catch (error) {
-      console.error('Error fetching accountants:', error);
-    }
-  }
 
   async function fetchDashboardData() {
     setLoading(true);
@@ -208,9 +230,11 @@ export function AccountantDashboard() {
   );
 
   const quickLinks = [
+    { title: 'Cash In', icon: ArrowDownLeft, path: '/cash', state: { action: 'in' }, color: 'text-success' },
+    { title: 'Cash Out', icon: ArrowUpRight, path: '/cash', state: { action: 'out' }, color: 'text-warning' },
     { title: 'Daily Entry', icon: PlusCircle, path: '/entry', color: 'text-accent' },
-    { title: 'Expense Logging', icon: Receipt, path: '/expenses', color: 'text-danger' },
-    { title: 'Cash Management', icon: Wallet, path: '/cash', color: 'text-success' },
+    { title: 'Fee Collection', icon: GraduationCap, path: '/fees', color: 'text-primary' },
+    { title: 'Expense Entry', icon: Receipt, path: '/expenses', color: 'text-danger' },
     { title: 'Monthly Reports', icon: FileText, path: '/reports', color: 'text-warning' },
   ];
 
@@ -343,6 +367,7 @@ export function AccountantDashboard() {
               <Link
                 key={link.title}
                 to={link.path}
+                state={link.state}
                 className="card group hover:border-accent transition-all duration-300 flex flex-col items-center text-center py-8"
               >
                 <div className={cn("mb-4 rounded-full p-3 bg-surface border border-border group-hover:bg-accent group-hover:text-background transition-colors duration-300", link.color)}>

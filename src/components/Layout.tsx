@@ -61,12 +61,6 @@ export function Layout() {
       roles: ['admin', 'accountant'] 
     },
     { 
-      label: 'Accountant', 
-      path: '/accountant', 
-      icon: LayoutDashboard, 
-      roles: ['admin', 'accountant'] 
-    },
-    { 
       label: 'Cash Book', 
       path: '/cashbook', 
       icon: Wallet, 
