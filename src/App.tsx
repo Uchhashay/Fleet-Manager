@@ -19,7 +19,6 @@ import { Cashbook } from './pages/Cashbook';
 import { FeeCollectionPage } from './pages/FeeCollection';
 import { AccountantReports } from './pages/AccountantReports';
 import { DriverPerformance } from './pages/DriverPerformance';
-import { CashManager } from './pages/CashManager';
 import { useAuth } from './contexts/AuthContext';
 
 const Home = () => {
@@ -74,11 +73,6 @@ export default function App() {
             <Route path="cashbook" element={
               <ProtectedRoute allowedRoles={['admin', 'accountant']}>
                 <Cashbook />
-              </ProtectedRoute>
-            } />
-            <Route path="cash" element={
-              <ProtectedRoute allowedRoles={['admin', 'accountant']}>
-                <CashManager />
               </ProtectedRoute>
             } />
             <Route path="fees" element={

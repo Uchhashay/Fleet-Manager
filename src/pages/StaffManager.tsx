@@ -160,14 +160,14 @@ export function StaffManager() {
                 <div className="space-y-1">
                   <div className="flex items-center space-x-1 text-secondary">
                     <IndianRupee className="h-2.5 w-2.5" />
-                    <p className="text-[9px] font-bold uppercase tracking-wider">Fixed</p>
+                    <p className="text-[9px] font-bold uppercase tracking-wider">Base Salary</p>
                   </div>
                   <p className="font-bold text-primary font-mono text-sm">{formatCurrency(s.fixed_salary)}</p>
                 </div>
                 <div className="space-y-1">
                   <div className="flex items-center space-x-1 text-secondary">
                     <Briefcase className="h-2.5 w-2.5" />
-                    <p className="text-[9px] font-bold uppercase tracking-wider">Duty</p>
+                    <p className="text-[9px] font-bold uppercase tracking-wider">Duty Rate</p>
                   </div>
                   <p className="font-bold text-primary font-mono text-sm">{formatCurrency(s.duty_rate || 0)}</p>
                 </div>
@@ -245,7 +245,7 @@ export function StaffManager() {
 
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
-                    <label className="label">Fixed</label>
+                    <label className="label">Base Salary</label>
                     <input
                       type="number"
                       required
@@ -255,7 +255,7 @@ export function StaffManager() {
                     />
                   </div>
                   <div className="space-y-2">
-                    <label className="label">Duty</label>
+                    <label className="label">Duty Rate</label>
                     <input
                       type="number"
                       value={formData.duty_rate || ''}

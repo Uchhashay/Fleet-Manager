@@ -46,6 +46,7 @@ export interface DailyRecord {
   helper_duty_payable: number;
   helper_duty_paid: number;
   notes?: string;
+  paid_by?: 'owner' | 'accountant';
   created_by: string;
   created_at: string;
 }
@@ -59,6 +60,7 @@ export interface BusExpense {
   amount: number;
   description: string;
   receipt_ref?: string;
+  paid_by?: 'owner' | 'accountant';
   created_by: string;
   created_at: string;
 }
@@ -72,6 +74,7 @@ export interface CompanyExpense {
   amount: number;
   description: string;
   receipt_ref?: string;
+  paid_by?: 'owner' | 'accountant';
   created_by: string;
   created_at: string;
 }
@@ -80,11 +83,12 @@ export interface CashTransaction {
   id: string;
   date: string; // YYYY-MM-DD
   type: 'in' | 'out';
-  category: 'owner_transfer' | 'salary' | 'bus_expense' | 'office_expense' | 'fee_collection' | 'daily_collection' | 'misc';
+  category: 'owner_transfer' | 'salary' | 'salary_advance' | 'duty_payment' | 'bus_expense' | 'office_expense' | 'fee_collection' | 'daily_collection' | 'misc';
   amount: number;
   description: string;
   linked_id?: string; // ID of salary_record or bus_expense
   staff_id?: string; // ID of staff member for salary payments
+  paid_by?: 'owner' | 'accountant';
   created_by?: string;
   created_at: any;
 }
@@ -96,10 +100,12 @@ export interface SalaryRecord {
   working_days: number;
   duty_amount: number;
   fixed_salary: number;
-  advance: number;
+  adjustments: number;
+  allowances: number;
   deductions: number;
-  net_payable: number;
-  status: 'pending' | 'paid';
+  net_payable: number; // Total amount due for the month (Earnings - Deductions)
+  status: 'unpaid' | 'partial' | 'paid';
+  notes?: string;
   created_at: any;
 }
 
@@ -128,6 +134,7 @@ export interface FeeCollection {
   payment_mode: 'Cash' | 'Online' | 'Cheque';
   fee_type: string;
   notes?: string;
+  paid_by?: 'owner' | 'accountant';
   recorded_by: string;
   created_at: any;
 }

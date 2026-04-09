@@ -35,7 +35,8 @@ export function ExpenseEntry() {
     subcategory: '',
     amount: 0,
     description: '',
-    receipt_ref: ''
+    receipt_ref: '',
+    paid_by: 'accountant' as 'owner' | 'accountant'
   });
 
   const categories = type === 'bus' ? EXPENSE_CATEGORIES.BUS : EXPENSE_CATEGORIES.COMPANY;
@@ -98,6 +99,7 @@ export function ExpenseEntry() {
           amount: formData.amount,
           description: `${type === 'bus' ? 'Bus' : 'Company'} Expense: ${formData.category}${formData.subcategory ? ` (${formData.subcategory})` : ''} - ${formData.description}`,
           linked_id: docRef.id,
+          paid_by: formData.paid_by,
           created_by: auth.currentUser?.uid,
           created_at: serverTimestamp()
         });
@@ -107,7 +109,7 @@ export function ExpenseEntry() {
 
       setMessage({ type: 'success', text: 'Expense saved successfully!' });
       setStep(1);
-      setFormData(prev => ({ ...prev, amount: 0, description: '', receipt_ref: '', category: '', subcategory: '' }));
+      setFormData(prev => ({ ...prev, amount: 0, description: '', receipt_ref: '', category: '', subcategory: '', paid_by: 'accountant' }));
       
       // Clear message after 3 seconds
       setTimeout(() => setMessage(null), 3000);
@@ -345,6 +347,36 @@ export function ExpenseEntry() {
                     required
                   />
                   <Calendar className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-secondary pointer-events-none stroke-[1.5px]" />
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <label className="label">Paid By</label>
+                <div className="grid grid-cols-2 gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setFormData({ ...formData, paid_by: 'accountant' })}
+                    className={cn(
+                      "flex items-center justify-center space-x-2 p-3 rounded-xl border transition-all",
+                      formData.paid_by === 'accountant' 
+                        ? "bg-accent/10 border-accent text-accent font-bold" 
+                        : "bg-surface border-border text-secondary hover:border-accent/50"
+                    )}
+                  >
+                    <span className="text-xs uppercase tracking-widest">Accountant</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setFormData({ ...formData, paid_by: 'owner' })}
+                    className={cn(
+                      "flex items-center justify-center space-x-2 p-3 rounded-xl border transition-all",
+                      formData.paid_by === 'owner' 
+                        ? "bg-accent/10 border-accent text-accent font-bold" 
+                        : "bg-surface border-border text-secondary hover:border-accent/50"
+                    )}
+                  >
+                    <span className="text-xs uppercase tracking-widest">Owner</span>
+                  </button>
                 </div>
               </div>
 

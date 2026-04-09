@@ -16,7 +16,8 @@ import {
   Users,
   ArrowDownLeft,
   ArrowUpRight,
-  GraduationCap
+  GraduationCap,
+  TrendingUp
 } from 'lucide-react';
 import { formatCurrency, cn } from '../lib/utils';
 import { DailyRecord, BusExpense, CompanyExpense, CashTransaction, Staff, Profile } from '../types';
@@ -31,6 +32,12 @@ export function AccountantDashboard() {
     totalExpenses: 0,
     netProfit: 0,
     accountantCash: 0,
+    ownerCash: 0,
+    monthlyNetCash: 0,
+    collectionsBreakdown: {
+      cash: 0,
+      nonCash: 0
+    },
     cashBreakdown: {
       daily: 0,
       fees: 0,
@@ -81,8 +88,12 @@ export function AccountantDashboard() {
             let bal = 0;
             cashSnap.docs.forEach(doc => {
               const t = doc.data();
-              if (t.type === 'in') bal += t.amount;
-              else bal -= t.amount;
+              const paidBy = t.paid_by || 'accountant';
+              // Only count towards this accountant's balance if they handled it
+              if (paidBy === 'accountant') {
+                if (t.type === 'in') bal += t.amount;
+                else bal -= t.amount;
+              }
             });
             setStaffBalances(prev => ({ ...prev, [acc.id]: bal }));
           });
@@ -110,29 +121,34 @@ export function AccountantDashboard() {
       const now = new Date();
       const monthStart = startOfMonth(now);
       const monthEnd = endOfMonth(now);
+      const startStr = format(monthStart, 'yyyy-MM-dd');
+      const endStr = format(monthEnd, 'yyyy-MM-dd');
       const targetUid = selectedAccountantId;
 
       // Fetch Daily Records for the month (only for target accountant)
       const dailySnap = await getDocs(query(
         collection(db, 'daily_records'),
-        where('date', '>=', format(monthStart, 'yyyy-MM-dd')),
-        where('date', '<=', format(monthEnd, 'yyyy-MM-dd')),
+        where('date', '>=', startStr),
+        where('date', '<=', endStr),
         where('created_by', '==', targetUid)
       ));
 
       let totalCollections = 0;
+      let cashCollections = 0;
       let dailyExpenses = 0;
       dailySnap.docs.forEach(doc => {
         const data = doc.data() as DailyRecord;
-        totalCollections += (data.school_morning || 0) + (data.school_evening || 0) + (data.charter_morning || 0) + (data.charter_evening || 0) + (data.private_booking || 0);
+        const amount = (data.school_morning || 0) + (data.school_evening || 0) + (data.charter_morning || 0) + (data.charter_evening || 0) + (data.private_booking || 0);
+        totalCollections += amount;
+        cashCollections += amount; // Daily records are always cash in this system
         dailyExpenses += (data.fuel_amount || 0) + (data.driver_duty_paid || 0) + (data.helper_duty_paid || 0);
       });
 
       // Fetch Bus Expenses for the month (only for target accountant)
       const busExpSnap = await getDocs(query(
         collection(db, 'bus_expenses'),
-        where('date', '>=', format(monthStart, 'yyyy-MM-dd')),
-        where('date', '<=', format(monthEnd, 'yyyy-MM-dd')),
+        where('date', '>=', startStr),
+        where('date', '<=', endStr),
         where('created_by', '==', targetUid)
       ));
       let busExpenses = 0;
@@ -143,8 +159,8 @@ export function AccountantDashboard() {
       // Fetch Company Expenses for the month (only for target accountant)
       const compExpSnap = await getDocs(query(
         collection(db, 'company_expenses'),
-        where('date', '>=', format(monthStart, 'yyyy-MM-dd')),
-        where('date', '<=', format(monthEnd, 'yyyy-MM-dd')),
+        where('date', '>=', startStr),
+        where('date', '<=', endStr),
         where('created_by', '==', targetUid)
       ));
       let companyExpenses = 0;
@@ -160,11 +176,17 @@ export function AccountantDashboard() {
         where('recorded_by', '==', targetUid)
       ));
       let feeCollections = 0;
+      let cashFees = 0;
       feeSnap.docs.forEach(doc => {
-        feeCollections += doc.data().amount || 0;
+        const data = doc.data();
+        feeCollections += data.amount || 0;
+        if (data.payment_mode === 'Cash') {
+          cashFees += data.amount || 0;
+        }
       });
 
       totalCollections += feeCollections;
+      cashCollections += cashFees;
       const totalExpenses = dailyExpenses + busExpenses + companyExpenses;
 
       // Fetch Accountant Cash Balance (only for target accountant)
@@ -174,6 +196,7 @@ export function AccountantDashboard() {
       ));
       
       let accountantCash = 0;
+      let ownerCash = 0;
       const breakdown = {
         daily: 0,
         fees: 0,
@@ -185,19 +208,43 @@ export function AccountantDashboard() {
 
       cashSnap.docs.forEach(doc => {
         const t = doc.data();
-        const amount = t.amount || 0;
+        const amount = Number(t.amount) || 0;
+        const tDateStr = t.date; // "YYYY-MM-DD"
+        const isThisMonth = tDateStr && tDateStr >= startStr && tDateStr <= endStr;
+        const paidBy = t.paid_by || 'accountant'; // Default to accountant for legacy
+
+        // Determine if this transaction belongs to the current view's ledger
+        const isTargetLedger = (profile?.role === 'admin' && selectedAccountantId === auth.currentUser?.uid) 
+          ? paidBy === 'owner' 
+          : paidBy === 'accountant';
+
         if (t.type === 'in') {
-          accountantCash += amount;
-          if (t.category === 'daily_collection') breakdown.daily += amount;
-          else if (t.category === 'fee_collection') breakdown.fees += amount;
-          else breakdown.manualIn += amount;
+          if (paidBy === 'accountant') accountantCash += amount;
+          else ownerCash += amount;
+
+          if (isThisMonth && isTargetLedger) {
+            if (t.category === 'daily_collection') breakdown.daily += amount;
+            else if (t.category === 'fee_collection') breakdown.fees += amount;
+            else breakdown.manualIn += amount;
+          }
         } else {
-          accountantCash -= amount;
-          if (t.category === 'salary') breakdown.salary += amount;
-          else if (t.category === 'owner_transfer') breakdown.transfers += amount;
-          else breakdown.expenses += amount;
+          if (paidBy === 'accountant') accountantCash -= amount;
+          else ownerCash -= amount;
+
+          if (isThisMonth && isTargetLedger) {
+            if (['salary', 'salary_advance', 'duty_payment'].includes(t.category)) breakdown.salary += amount;
+            else if (t.category === 'owner_transfer') breakdown.transfers += amount;
+            else breakdown.expenses += amount;
+          }
         }
       });
+
+      const currentBalance = (profile?.role === 'admin' && selectedAccountantId === auth.currentUser?.uid) 
+        ? ownerCash 
+        : accountantCash;
+
+      const monthlyNetCash = (breakdown.daily + breakdown.fees + breakdown.manualIn) - 
+                            (breakdown.expenses + breakdown.salary + breakdown.transfers);
 
       // Fetch recent cash transactions (only for target accountant)
       const recentSnap = await getDocs(query(
@@ -212,7 +259,13 @@ export function AccountantDashboard() {
         totalCollections,
         totalExpenses,
         netProfit: totalCollections - totalExpenses,
-        accountantCash,
+        accountantCash: currentBalance,
+        ownerCash,
+        monthlyNetCash,
+        collectionsBreakdown: {
+          cash: cashCollections,
+          nonCash: totalCollections - cashCollections
+        },
         cashBreakdown: breakdown
       });
       setRecentRecords(recentSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as CashTransaction)));
@@ -230,8 +283,8 @@ export function AccountantDashboard() {
   );
 
   const quickLinks = [
-    { title: 'Cash In', icon: ArrowDownLeft, path: '/cash', state: { action: 'in' }, color: 'text-success' },
-    { title: 'Cash Out', icon: ArrowUpRight, path: '/cash', state: { action: 'out' }, color: 'text-warning' },
+    { title: 'Cash In', icon: ArrowDownLeft, path: '/cashbook', state: { action: 'in' }, color: 'text-success' },
+    { title: 'Cash Out', icon: ArrowUpRight, path: '/cashbook', state: { action: 'out' }, color: 'text-warning' },
     { title: 'Daily Entry', icon: PlusCircle, path: '/entry', color: 'text-accent' },
     { title: 'Fee Collection', icon: GraduationCap, path: '/fees', color: 'text-primary' },
     { title: 'Expense Entry', icon: Receipt, path: '/expenses', color: 'text-danger' },
@@ -304,25 +357,30 @@ export function AccountantDashboard() {
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center space-x-2 opacity-80">
               <Wallet className="h-4 w-4" />
-              <span className="text-[10px] font-bold uppercase tracking-wider">Accountant Cash Balance</span>
+              <span className="text-[10px] font-bold uppercase tracking-wider">Cash in Hand</span>
             </div>
           </div>
-          <h3 className="text-3xl font-bold font-mono tracking-tighter">{formatCurrency(stats.accountantCash)}</h3>
-          <p className="mt-1 text-[10px] opacity-70 font-medium text-background/80 mb-4">Actual cash in hand with accountant</p>
+          <h3 className="text-4xl font-bold font-mono tracking-tighter">
+            {formatCurrency(stats.monthlyNetCash)}
+          </h3>
+          <p className="mt-1 text-[10px] opacity-70 font-medium text-background/80 mb-4">Current month's available cash</p>
           
-          <div className="mt-4 pt-4 border-t border-background/20 space-y-2">
+          <div className="mt-4 pt-4 border-t border-background/20 space-y-3">
             <div className="flex justify-between text-[10px] font-medium">
-              <span className="opacity-70">Daily Collections</span>
-              <span className="font-mono">+{formatCurrency(stats.cashBreakdown.daily)}</span>
+              <span className="opacity-70">Cash Collections</span>
+              <span className="font-mono">+{formatCurrency(stats.cashBreakdown.daily + stats.cashBreakdown.fees + stats.cashBreakdown.manualIn)}</span>
             </div>
             <div className="flex justify-between text-[10px] font-medium">
-              <span className="opacity-70">Fee Collections</span>
-              <span className="font-mono">+{formatCurrency(stats.cashBreakdown.fees)}</span>
+              <span className="opacity-70">Cash Expenses</span>
+              <span className="font-mono">-{formatCurrency(stats.cashBreakdown.expenses + stats.cashBreakdown.salary + stats.cashBreakdown.transfers)}</span>
             </div>
-            <div className="flex justify-between text-[10px] font-medium">
-              <span className="opacity-70">Expenses/Salary</span>
-              <span className="font-mono">-{formatCurrency(stats.cashBreakdown.expenses + stats.cashBreakdown.salary)}</span>
-            </div>
+            
+            {stats.accountantCash !== stats.monthlyNetCash && (
+              <div className="pt-3 border-t border-background/10 flex justify-between text-[9px] font-bold uppercase tracking-widest opacity-50">
+                <span>Total Cumulative Balance</span>
+                <span>{formatCurrency(stats.accountantCash)}</span>
+              </div>
+            )}
           </div>
         </motion.div>
 
@@ -337,6 +395,12 @@ export function AccountantDashboard() {
             <span className="text-[10px] font-bold uppercase tracking-wider">Monthly Collections</span>
           </div>
           <h3 className="mt-4 text-3xl font-bold text-primary font-mono tracking-tighter">{formatCurrency(stats.totalCollections)}</h3>
+          <div className="mt-2 flex items-center space-x-3 text-[9px] font-bold uppercase tracking-widest">
+            <span className="text-success">Cash: {formatCurrency(stats.collectionsBreakdown.cash)}</span>
+            {stats.collectionsBreakdown.nonCash > 0 && (
+              <span className="text-secondary opacity-60">Other: {formatCurrency(stats.collectionsBreakdown.nonCash)}</span>
+            )}
+          </div>
           <p className="mt-1 text-[10px] text-secondary font-medium">This month's total revenue</p>
         </motion.div>
 

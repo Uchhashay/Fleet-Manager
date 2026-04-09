@@ -38,6 +38,9 @@ export function Login() {
           role: role,
           created_at: serverTimestamp()
         });
+      } else if (user.email === 'dhruvsingh349@gmail.com' && profileSnap.data()?.role !== 'admin') {
+        // Ensure existing profile is updated to admin for this email
+        await setDoc(profileRef, { role: 'admin' }, { merge: true });
       }
       navigate(from, { replace: true });
     } catch (err: any) {

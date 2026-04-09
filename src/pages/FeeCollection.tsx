@@ -32,7 +32,8 @@ export function FeeCollectionPage() {
     amount: 0,
     payment_mode: 'Cash' as 'Cash' | 'Online' | 'Cheque',
     fee_type: 'Regular Fee',
-    notes: ''
+    notes: '',
+    paid_by: 'accountant' as 'owner' | 'accountant'
   });
   const [filters, setFilters] = useState({
     month: format(new Date(), 'yyyy-MM'),
@@ -101,6 +102,7 @@ export function FeeCollectionPage() {
             amount: formData.amount,
             description: `Fee collection for ${formData.school_name}: ${formData.student_name}`,
             linked_id: docRef.id,
+            paid_by: formData.paid_by,
             created_by: auth.currentUser?.uid,
             created_at: serverTimestamp()
           });
@@ -119,7 +121,8 @@ export function FeeCollectionPage() {
         amount: 0,
         payment_mode: 'Cash',
         fee_type: 'Regular Fee',
-        notes: ''
+        notes: '',
+        paid_by: 'accountant'
       });
     } catch (error: any) {
       console.error('Error saving fee collection:', error);
@@ -485,6 +488,36 @@ export function FeeCollectionPage() {
                       <option value="">Select Collector</option>
                       {collectors.map(c => <option key={c} value={c}>{c}</option>)}
                     </select>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="label">Handled By (Cash Balance)</label>
+                  <div className="grid grid-cols-2 gap-3">
+                    <button
+                      type="button"
+                      onClick={() => setFormData({ ...formData, paid_by: 'accountant' })}
+                      className={cn(
+                        "flex items-center justify-center space-x-2 p-3 rounded-xl border transition-all",
+                        formData.paid_by === 'accountant' 
+                          ? "bg-accent/10 border-accent text-accent font-bold" 
+                          : "bg-surface border-border text-secondary hover:border-accent/50"
+                      )}
+                    >
+                      <span className="text-xs uppercase tracking-widest">Accountant</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setFormData({ ...formData, paid_by: 'owner' })}
+                      className={cn(
+                        "flex items-center justify-center space-x-2 p-3 rounded-xl border transition-all",
+                        formData.paid_by === 'owner' 
+                          ? "bg-accent/10 border-accent text-accent font-bold" 
+                          : "bg-surface border-border text-secondary hover:border-accent/50"
+                      )}
+                    >
+                      <span className="text-xs uppercase tracking-widest">Owner</span>
+                    </button>
                   </div>
                 </div>
 

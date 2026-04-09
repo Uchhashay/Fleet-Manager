@@ -31,6 +31,12 @@ export function UserManager() {
   }
 
   async function updateRole(userId: string, newRole: UserRole) {
+    const profile = profiles.find(p => p.id === userId);
+    if (profile?.email === 'dhruvsingh349@gmail.com') {
+      console.error('Cannot change role for primary admin');
+      return;
+    }
+    
     setUpdatingId(userId);
     try {
       await updateDoc(doc(db, 'profiles', userId), {
@@ -107,31 +113,39 @@ export function UserManager() {
                   </div>
                 </div>
 
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-[10px] font-bold uppercase tracking-widest text-secondary/40 mr-2">Assign Role:</span>
-                  {roles.map((role) => (
-                    <button
-                      key={role}
-                      onClick={() => updateRole(profile.id, role)}
-                      disabled={updatingId === profile.id}
-                      className={cn(
-                        "px-3 py-1.5 rounded-xl text-[10px] font-bold uppercase tracking-widest transition-all border",
-                        profile.role === role 
-                          ? "bg-primary text-surface border-primary shadow-lg shadow-primary/20" 
-                          : "bg-surface text-secondary border-border hover:border-accent/50"
-                      )}
-                    >
-                      {updatingId === profile.id && profile.role !== role ? (
-                        <Loader2 className="h-3 w-3 animate-spin mx-auto" />
-                      ) : (
-                        <div className="flex items-center space-x-1">
-                          {profile.role === role && <Check className="h-3 w-3" />}
-                          <span>{role}</span>
-                        </div>
-                      )}
-                    </button>
-                  ))}
-                </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-[10px] font-bold uppercase tracking-widest text-secondary/40 mr-2">Assign Role:</span>
+                    {roles.map((role) => {
+                      const isLockedAdmin = profile.email === 'dhruvsingh349@gmail.com';
+                      const isDisabled = updatingId === profile.id || (isLockedAdmin && role !== 'admin');
+                      
+                      if (isLockedAdmin && role !== 'admin') return null;
+
+                      return (
+                        <button
+                          key={role}
+                          onClick={() => updateRole(profile.id, role)}
+                          disabled={isDisabled}
+                          className={cn(
+                            "px-3 py-1.5 rounded-xl text-[10px] font-bold uppercase tracking-widest transition-all border",
+                            profile.role === role 
+                              ? "bg-primary text-surface border-primary shadow-lg shadow-primary/20" 
+                              : "bg-surface text-secondary border-border hover:border-accent/50",
+                            isLockedAdmin && "cursor-default opacity-100"
+                          )}
+                        >
+                          {updatingId === profile.id && profile.role !== role ? (
+                            <Loader2 className="h-3 w-3 animate-spin mx-auto" />
+                          ) : (
+                            <div className="flex items-center space-x-1">
+                              {profile.role === role && <Check className="h-3 w-3" />}
+                              <span>{role}</span>
+                            </div>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
               </div>
             </motion.div>
           ))

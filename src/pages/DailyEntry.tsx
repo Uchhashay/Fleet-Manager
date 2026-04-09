@@ -35,7 +35,8 @@ export function DailyEntry() {
     helper_duty_payable: 0,
     helper_duty_paid: 0,
     is_holiday: false,
-    notes: ''
+    notes: '',
+    paid_by: 'accountant' as 'owner' | 'accountant'
   });
 
   useEffect(() => {
@@ -111,6 +112,7 @@ export function DailyEntry() {
             amount: netCollection,
             description: `Daily Collection: Bus ${buses.find(b => b.id === formData.bus_id)?.registration_number}`,
             linked_id: docRef.id,
+            paid_by: formData.paid_by,
             created_by: auth.currentUser?.uid,
             created_at: serverTimestamp()
           });
@@ -129,6 +131,7 @@ export function DailyEntry() {
             amount: netExpense,
             description: `Daily Expenses (Fuel/Duty): Bus ${buses.find(b => b.id === formData.bus_id)?.registration_number}`,
             linked_id: docRef.id,
+            paid_by: formData.paid_by,
             created_by: auth.currentUser?.uid,
             created_at: serverTimestamp()
           });
@@ -452,6 +455,36 @@ export function DailyEntry() {
                         <div className="h-[15px]" />
                         <input type="number" inputMode="numeric" name="helper_duty_paid" value={formData.helper_duty_paid || ''} onChange={handleInputChange} className="input font-mono" placeholder="0" />
                       </div>
+                    </div>
+                  </div>
+
+                  <div className="space-y-2 pt-4 border-t border-border/50">
+                    <label className="label">Handled By (Cash)</label>
+                    <div className="grid grid-cols-2 gap-3">
+                      <button
+                        type="button"
+                        onClick={() => setFormData({ ...formData, paid_by: 'accountant' })}
+                        className={cn(
+                          "flex items-center justify-center space-x-2 p-3 rounded-xl border transition-all",
+                          formData.paid_by === 'accountant' 
+                            ? "bg-accent/10 border-accent text-accent font-bold" 
+                            : "bg-surface border-border text-secondary hover:border-accent/50"
+                        )}
+                      >
+                        <span className="text-xs uppercase tracking-widest">Accountant</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setFormData({ ...formData, paid_by: 'owner' })}
+                        className={cn(
+                          "flex items-center justify-center space-x-2 p-3 rounded-xl border transition-all",
+                          formData.paid_by === 'owner' 
+                            ? "bg-accent/10 border-accent text-accent font-bold" 
+                            : "bg-surface border-border text-secondary hover:border-accent/50"
+                        )}
+                      >
+                        <span className="text-xs uppercase tracking-widest">Owner</span>
+                      </button>
                     </div>
                   </div>
                   

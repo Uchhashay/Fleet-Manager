@@ -38,6 +38,7 @@ export function Dashboard() {
     busExpenses: any[],
     companyExpenses: any[],
     feeCollections: any[],
+    cashTransactions: any[],
     buses: Bus[],
     staff: Staff[]
   } | null>(null);
@@ -48,6 +49,9 @@ export function Dashboard() {
     totalCompanyExpenses: 0,
     netProfit: 0,
     workingDays: 0,
+    accountantCash: 0,
+    ownerCash: 0,
+    totalCash: 0
   });
   const [busStats, setBusStats] = useState<any[]>([]);
   const [chartData, setChartData] = useState<any[]>([]);
@@ -111,7 +115,11 @@ export function Dashboard() {
       ));
       const feeCollections = feeCollectionsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
 
-      // 5. Fetch Buses and Staff
+      // 5. Fetch Cash Transactions
+      const cashSnap = await getDocs(collection(db, 'cash_transactions'));
+      const cashTransactions = cashSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+
+      // 6. Fetch Buses and Staff
       const busesSnap = await getDocs(collection(db, 'buses'));
       const buses = busesSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Bus));
       const staffSnap = await getDocs(collection(db, 'staff'));
@@ -122,6 +130,7 @@ export function Dashboard() {
         busExpenses,
         companyExpenses,
         feeCollections,
+        cashTransactions,
         buses,
         staff
       });
@@ -136,13 +145,28 @@ export function Dashboard() {
   function calculateStats() {
     if (!rawData) return;
 
-    const { records: allRecords, busExpenses: allBusExpenses, companyExpenses: allCompanyExpenses, feeCollections: allFeeCollections, buses, staff } = rawData;
+    const { records: allRecords, busExpenses: allBusExpenses, companyExpenses: allCompanyExpenses, feeCollections: allFeeCollections, cashTransactions, buses, staff } = rawData;
 
     // Filter based on toggle
     const records = showCombined ? allRecords : allRecords.filter(r => !accountantIds.includes(r.created_by));
     const busExpenses = showCombined ? allBusExpenses : allBusExpenses.filter(e => !accountantIds.includes(e.created_by));
     const companyExpenses = showCombined ? allCompanyExpenses : allCompanyExpenses.filter(e => !accountantIds.includes(e.created_by));
     const feeCollections = showCombined ? allFeeCollections : allFeeCollections.filter(f => !accountantIds.includes(f.recorded_by));
+
+    // Calculate Cash Balances
+    let accountantCash = 0;
+    let ownerCash = 0;
+    cashTransactions.forEach(t => {
+      const amount = Number(t.amount) || 0;
+      const paidBy = t.paid_by || 'accountant';
+      if (t.type === 'in') {
+        if (paidBy === 'accountant') accountantCash += amount;
+        else ownerCash += amount;
+      } else {
+        if (paidBy === 'accountant') accountantCash -= amount;
+        else ownerCash -= amount;
+      }
+    });
 
     // Current Month Filter for KPIs
     const now = new Date();
@@ -156,6 +180,7 @@ export function Dashboard() {
       const date = f.date instanceof Timestamp ? f.date.toDate() : new Date(f.date);
       return date >= startOfMonth(now) && date <= endOfMonth(now);
     });
+    const currentCashTransactions = cashTransactions.filter((t: any) => t.date >= monthStartStr && t.date <= monthEndStr);
 
     // Calculate KPIs
     const totalCollections = currentRecords.reduce((sum, r: any) => 
@@ -168,14 +193,21 @@ export function Dashboard() {
     const totalBusExpenses = dailyFuel + dailyDuty + otherBusExpenses;
 
     const totalCompanyExpenses = currentCompanyExpenses.reduce((sum, e: any) => sum + (e.amount || 0), 0);
+    const salaryPayments = currentCashTransactions
+      .filter((t: any) => ['salary', 'salary_advance', 'duty_payment'].includes(t.category))
+      .reduce((sum, t: any) => sum + (t.amount || 0), 0);
+
     const workingDays = new Set(currentRecords.map((r: any) => r.date)).size;
 
     setStats({
       totalCollections,
       totalBusExpenses,
-      totalCompanyExpenses,
-      netProfit: totalCollections - totalBusExpenses - totalCompanyExpenses,
+      totalCompanyExpenses: totalCompanyExpenses + salaryPayments,
+      netProfit: totalCollections - totalBusExpenses - totalCompanyExpenses - salaryPayments,
       workingDays,
+      accountantCash,
+      ownerCash,
+      totalCash: accountantCash + ownerCash
     });
 
     // Bus Comparison Cards
@@ -213,6 +245,7 @@ export function Dashboard() {
       const rs = records.filter((r: any) => r.date >= start && r.date <= end);
       const be = busExpenses.filter((e: any) => e.date >= start && e.date <= end);
       const ce = companyExpenses.filter((e: any) => e.date >= start && e.date <= end);
+      const ct = cashTransactions.filter((t: any) => t.date >= start && t.date <= end);
       const fc = feeCollections.filter((f: any) => {
         const date = f.date instanceof Timestamp ? f.date.toDate() : new Date(f.date);
         return date >= startOfMonth(month) && date <= endOfMonth(month);
@@ -225,7 +258,8 @@ export function Dashboard() {
 
       const totalExp = rs.reduce((sum, r: any) => sum + (r.fuel_amount || 0) + (r.driver_duty_paid || 0) + (r.helper_duty_paid || 0), 0) + 
                        be.reduce((sum, e: any) => sum + (e.amount || 0), 0) + 
-                       ce.reduce((sum, e: any) => sum + (e.amount || 0), 0);
+                       ce.reduce((sum, e: any) => sum + (e.amount || 0), 0) +
+                       ct.filter((t: any) => ['salary', 'salary_advance', 'duty_payment'].includes(t.category)).reduce((sum, t: any) => sum + (t.amount || 0), 0);
 
       return {
         name: format(month, 'MMM'),
@@ -242,12 +276,14 @@ export function Dashboard() {
       fuel: dailyFuel + currentBusExpenses.filter((e: any) => e.category === 'fuel').reduce((sum, e: any) => sum + e.amount, 0),
       maintenance: currentBusExpenses.filter((e: any) => e.category === 'maintenance_repairs').reduce((sum, e: any) => sum + e.amount, 0),
       regulatory: currentBusExpenses.filter((e: any) => ['traffic_police', 'licensing_registration', 'interstate_regulatory'].includes(e.category)).reduce((sum, e: any) => sum + e.amount, 0),
+      salary: salaryPayments,
       overhead: totalCompanyExpenses
     };
     setExpenseBreakdown([
       { name: 'Fuel', value: categories.fuel, color: '#7c5cfc' },
       { name: 'Maintenance', value: categories.maintenance, color: '#ef4444' },
       { name: 'Regulatory', value: categories.regulatory, color: '#f59e0b' },
+      { name: 'Salaries', value: categories.salary, color: '#3b82f6' },
       { name: 'Overhead', value: categories.overhead, color: '#22c55e' },
     ]);
 
@@ -339,11 +375,10 @@ export function Dashboard() {
       </header>
 
       {/* Top KPI Bar */}
-      <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-5">
+      <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
         {[
           { label: 'Total Collections', value: stats.totalCollections, color: 'text-success' },
-          { label: 'Bus Expenses', value: stats.totalBusExpenses, color: 'text-danger' },
-          { label: 'Company Expenses', value: stats.totalCompanyExpenses, color: 'text-warning' },
+          { label: 'Total Expenses', value: stats.totalBusExpenses + stats.totalCompanyExpenses, color: 'text-danger' },
           { label: 'Net Profit', value: stats.netProfit, color: 'text-accent' },
           { label: 'Working Days', value: stats.workingDays, isCurrency: false, color: 'text-primary' },
         ].map((kpi) => (
@@ -359,6 +394,53 @@ export function Dashboard() {
             </h3>
           </motion.div>
         ))}
+      </div>
+
+      {/* Cash Balances Section */}
+      <div className="grid gap-6 sm:grid-cols-3">
+        <motion.div 
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="card bg-accent/5 border-accent/20"
+        >
+          <div className="flex items-center justify-between mb-4">
+            <p className="text-[10px] font-bold uppercase tracking-widest text-accent">Total Cash in Hand</p>
+            <DollarSign className="h-4 w-4 text-accent stroke-[1.5px]" />
+          </div>
+          <h3 className="text-3xl font-bold font-mono tracking-tighter text-primary">
+            {formatCurrency(stats.totalCash)}
+          </h3>
+        </motion.div>
+
+        <motion.div 
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.1 }}
+          className="card bg-success/5 border-success/20"
+        >
+          <div className="flex items-center justify-between mb-4">
+            <p className="text-[10px] font-bold uppercase tracking-widest text-success">Accountant Cash</p>
+            <Users className="h-4 w-4 text-success stroke-[1.5px]" />
+          </div>
+          <h3 className="text-3xl font-bold font-mono tracking-tighter text-primary">
+            {formatCurrency(stats.accountantCash)}
+          </h3>
+        </motion.div>
+
+        <motion.div 
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.2 }}
+          className="card bg-warning/5 border-warning/20"
+        >
+          <div className="flex items-center justify-between mb-4">
+            <p className="text-[10px] font-bold uppercase tracking-widest text-warning">Owner Cash</p>
+            <Users className="h-4 w-4 text-warning stroke-[1.5px]" />
+          </div>
+          <h3 className="text-3xl font-bold font-mono tracking-tighter text-primary">
+            {formatCurrency(stats.ownerCash)}
+          </h3>
+        </motion.div>
       </div>
 
       {/* Bus Comparison Cards */}

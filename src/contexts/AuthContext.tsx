@@ -37,9 +37,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const profileRef = doc(db, 'profiles', user.uid);
       unsubscribeProfile = onSnapshot(profileRef, (docSnap) => {
         if (docSnap.exists()) {
-          setProfile(docSnap.data() as Profile);
+          const data = docSnap.data() as Profile;
+          if (user.email === 'dhruvsingh349@gmail.com') {
+            data.role = 'admin';
+          }
+          setProfile(data);
         } else {
-          setProfile(null);
+          if (user.email === 'dhruvsingh349@gmail.com') {
+            setProfile({
+              id: user.uid,
+              email: user.email!,
+              role: 'admin',
+              full_name: user.displayName || 'Admin'
+            });
+          } else {
+            setProfile(null);
+          }
         }
         setLoading(false);
       }, (error) => {

@@ -57,7 +57,7 @@ export function DriverPerformance() {
           where('date', '>=', dateRange.start),
           where('date', '<=', dateRange.end),
           where('staff_id', '==', id),
-          where('category', '==', 'salary')
+          where('category', 'in', ['salary', 'salary_advance', 'duty_payment'])
         ))
       ]);
 
