@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { db } from '../lib/firebase';
-import { collection, getDocs, query, where, orderBy } from 'firebase/firestore';
-import { DailyRecord, Bus, Staff } from '../types';
+import { collection, getDocs, query, where, orderBy, onSnapshot } from 'firebase/firestore';
+import { DailyRecord, Bus, Staff, School } from '../types';
 import { formatCurrency, cn } from '../lib/utils';
 import { handleFirestoreError, OperationType } from '../lib/firebase-utils';
 import { Download, ChevronLeft, ChevronRight, Calendar as CalendarIcon, Table as TableIcon, Bus as BusIcon, Filter, LayoutGrid, AlertCircle, X, User, Fuel, Receipt, Info, Edit2, Save, RotateCcw, Check } from 'lucide-react';
@@ -18,6 +18,7 @@ export function MonthlyView() {
   const [records, setRecords] = useState<DailyRecord[]>([]);
   const [buses, setBuses] = useState<Bus[]>([]);
   const [staff, setStaff] = useState<Staff[]>([]);
+  const [schools, setSchools] = useState<School[]>([]);
   const [selectedBus, setSelectedBus] = useState<string>(searchParams.get('busId') || 'all');
   const [selectedDay, setSelectedDay] = useState<Date | null>(null);
   const [currentMonth, setCurrentMonth] = useState(() => {
@@ -68,6 +69,14 @@ export function MonthlyView() {
 
   useEffect(() => {
     fetchInitialData();
+
+    // Listen to schools
+    const qSchools = query(collection(db, 'schools'), orderBy('name'));
+    const unsubscribeSchools = onSnapshot(qSchools, (snap) => {
+      setSchools(snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as School)));
+    });
+
+    return () => unsubscribeSchools();
   }, []);
 
   useEffect(() => {
@@ -157,8 +166,8 @@ export function MonthlyView() {
           bus?.registration_number || 'N/A',
           driver?.full_name || 'N/A',
           helper?.full_name || 'N/A',
-          r.school_morning || 0,
-          r.school_evening || 0,
+          r.school_morning_name || r.school_morning || 0,
+          r.school_evening_name || r.school_evening || 0,
           r.charter_morning || 0,
           r.charter_evening || 0,
           r.private_booking || 0,
@@ -502,7 +511,7 @@ export function MonthlyView() {
                       <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-secondary">Driver/Helper</th>
                     )}
                     {visibleColumns.has('school_staff') && (
-                      <th className="px-6 py-4 text-center text-[10px] font-bold uppercase tracking-widest text-secondary border-x border-border/30" colSpan={2}>School Staff</th>
+                      <th className="px-6 py-4 text-center text-[10px] font-bold uppercase tracking-widest text-secondary border-x border-border/30" colSpan={2}>School Names</th>
                     )}
                     {visibleColumns.has('charter_office') && (
                       <th className="px-6 py-4 text-center text-[10px] font-bold uppercase tracking-widest text-secondary border-x border-border/30" colSpan={2}>Charter/Office</th>
@@ -677,25 +686,51 @@ export function MonthlyView() {
                           )}
                           {visibleColumns.has('school_staff') && (
                             <>
-                              <td className="px-6 py-4 text-center font-mono text-xs border-x border-border/10">
+                              <td className="px-6 py-4 text-center text-xs border-x border-border/10">
                                 {isEditMode ? (
-                                  <input 
-                                    type="number" 
-                                    value={school_morning}
-                                    onChange={(e) => handleLocalChange(row.date, r?.bus_id || row.busId, 'school_morning', Number(e.target.value), record)}
-                                    className="w-16 text-center bg-background border border-border rounded px-1 py-0.5"
-                                  />
-                                ) : (hasData ? school_morning : '-')}
+                                  <select
+                                    value={r?.school_morning_name || ''}
+                                    onChange={(e) => handleLocalChange(row.date, r?.bus_id || row.busId, 'school_morning_name', e.target.value, record)}
+                                    className="w-24 text-[10px] bg-background border border-border rounded px-1 py-0.5"
+                                  >
+                                    <option value="">Select School</option>
+                                    {schools.map(s => (
+                                      <option key={s.id} value={s.name}>{s.name}</option>
+                                    ))}
+                                  </select>
+                                ) : (
+                                  <div className="flex flex-col items-center">
+                                    <span className="font-bold text-primary truncate max-w-[80px]" title={r?.school_morning_name}>
+                                      {isSummarized ? '-' : (r?.school_morning_name || '-')}
+                                    </span>
+                                    {school_morning > 0 && (
+                                      <span className="text-[9px] text-secondary font-mono">{formatCurrency(school_morning)}</span>
+                                    )}
+                                  </div>
+                                )}
                               </td>
-                              <td className="px-6 py-4 text-center font-mono text-xs border-x border-border/10">
+                              <td className="px-6 py-4 text-center text-xs border-x border-border/10">
                                 {isEditMode ? (
-                                  <input 
-                                    type="number" 
-                                    value={school_evening}
-                                    onChange={(e) => handleLocalChange(row.date, r?.bus_id || row.busId, 'school_evening', Number(e.target.value), record)}
-                                    className="w-16 text-center bg-background border border-border rounded px-1 py-0.5"
-                                  />
-                                ) : (hasData ? school_evening : '-')}
+                                  <select
+                                    value={r?.school_evening_name || ''}
+                                    onChange={(e) => handleLocalChange(row.date, r?.bus_id || row.busId, 'school_evening_name', e.target.value, record)}
+                                    className="w-24 text-[10px] bg-background border border-border rounded px-1 py-0.5"
+                                  >
+                                    <option value="">Select School</option>
+                                    {schools.map(s => (
+                                      <option key={s.id} value={s.name}>{s.name}</option>
+                                    ))}
+                                  </select>
+                                ) : (
+                                  <div className="flex flex-col items-center">
+                                    <span className="font-bold text-primary truncate max-w-[80px]" title={r?.school_evening_name}>
+                                      {isSummarized ? '-' : (r?.school_evening_name || '-')}
+                                    </span>
+                                    {school_evening > 0 && (
+                                      <span className="text-[9px] text-secondary font-mono">{formatCurrency(school_evening)}</span>
+                                    )}
+                                  </div>
+                                )}
                               </td>
                             </>
                           )}

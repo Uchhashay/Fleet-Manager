@@ -140,5 +140,10 @@ service cloud.firestore {
       allow read: if isAuthenticated();
       allow write: if isAdmin();
     }
+
+    match /schools/{schoolId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
   }
 }

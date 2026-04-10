@@ -35,6 +35,8 @@ export interface DailyRecord {
   is_holiday: boolean;
   school_morning: number;
   school_evening: number;
+  school_morning_name?: string;
+  school_evening_name?: string;
   charter_morning: number;
   charter_evening: number;
   private_booking: number;
@@ -49,6 +51,12 @@ export interface DailyRecord {
   paid_by?: 'owner' | 'accountant';
   created_by: string;
   created_at: string;
+}
+
+export interface School {
+  id: string;
+  name: string;
+  created_at: any;
 }
 
 export interface BusExpense {

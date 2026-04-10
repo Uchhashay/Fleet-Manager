@@ -1,15 +1,19 @@
 import React, { useState, useEffect } from 'react';
 import { db, auth } from '../lib/firebase';
-import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
+import { doc, getDoc, setDoc, serverTimestamp, collection, addDoc, deleteDoc, onSnapshot, query, orderBy } from 'firebase/firestore';
 import { useAuth } from '../contexts/AuthContext';
-import { handleFirestoreError, OperationType } from '../lib/firestore-errors';
+import { handleFirestoreError, OperationType } from '../lib/firebase-utils';
 import { formatCurrency, cn } from '../lib/utils';
+import { School } from '../types';
 import { 
   Wallet, 
   Save, 
   AlertCircle,
   CheckCircle2,
-  Info
+  Info,
+  Plus,
+  Trash2,
+  School as SchoolIcon
 } from 'lucide-react';
 import { motion } from 'framer-motion';
 
@@ -22,9 +26,20 @@ export function Settings() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [schools, setSchools] = useState<School[]>([]);
+  const [newSchoolName, setNewSchoolName] = useState('');
+  const [addingSchool, setAddingSchool] = useState(false);
 
   useEffect(() => {
     fetchSettings();
+    
+    // Listen to schools
+    const q = query(collection(db, 'schools'), orderBy('name'));
+    const unsubscribe = onSnapshot(q, (snap) => {
+      setSchools(snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as School)));
+    });
+
+    return () => unsubscribe();
   }, []);
 
   async function fetchSettings() {
@@ -55,6 +70,31 @@ export function Settings() {
       handleFirestoreError(error, OperationType.WRITE, 'settings/opening_balances');
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function handleAddSchool() {
+    if (!newSchoolName.trim()) return;
+    setAddingSchool(true);
+    try {
+      await addDoc(collection(db, 'schools'), {
+        name: newSchoolName.trim(),
+        created_at: serverTimestamp()
+      });
+      setNewSchoolName('');
+    } catch (error) {
+      handleFirestoreError(error, OperationType.CREATE, 'schools');
+    } finally {
+      setAddingSchool(false);
+    }
+  }
+
+  async function handleDeleteSchool(id: string) {
+    if (!confirm('Are you sure you want to delete this school?')) return;
+    try {
+      await deleteDoc(doc(db, 'schools', id));
+    } catch (error) {
+      handleFirestoreError(error, OperationType.DELETE, 'schools');
     }
   }
 
@@ -158,6 +198,70 @@ export function Settings() {
               )}
               <span>{saving ? 'Saving...' : 'Save Settings'}</span>
             </button>
+          </div>
+        </motion.div>
+
+        {/* School Management Section */}
+        <motion.div 
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.1 }}
+          className="card space-y-6"
+        >
+          <div className="flex items-center space-x-3 border-b border-border pb-4">
+            <div className="h-10 w-10 rounded-xl bg-accent/10 flex items-center justify-center text-accent">
+              <SchoolIcon className="h-5 w-5 stroke-[1.5px]" />
+            </div>
+            <div>
+              <h3 className="text-lg font-bold text-primary">School Names</h3>
+              <p className="text-xs text-secondary font-medium">Manage the list of schools for Staff Route dropdowns</p>
+            </div>
+          </div>
+
+          <div className="flex space-x-2">
+            <input
+              type="text"
+              value={newSchoolName}
+              onChange={(e) => setNewSchoolName(e.target.value)}
+              placeholder="Enter school name..."
+              className="input flex-1"
+              onKeyDown={(e) => e.key === 'Enter' && handleAddSchool()}
+            />
+            <button
+              onClick={handleAddSchool}
+              disabled={addingSchool || !newSchoolName.trim()}
+              className="btn-primary !py-2 !px-4 flex items-center space-x-2"
+            >
+              {addingSchool ? (
+                <div className="h-4 w-4 animate-spin rounded-full border-2 border-background border-t-transparent"></div>
+              ) : (
+                <Plus className="h-4 w-4" />
+              )}
+              <span>Add</span>
+            </button>
+          </div>
+
+          <div className="grid gap-3">
+            {schools.length === 0 ? (
+              <div className="text-center py-8 bg-surface rounded-xl border border-dashed border-border">
+                <p className="text-xs text-secondary font-medium">No schools added yet</p>
+              </div>
+            ) : (
+              schools.map(school => (
+                <div 
+                  key={school.id}
+                  className="flex items-center justify-between p-3 rounded-xl bg-surface border border-border group hover:border-accent/30 transition-all"
+                >
+                  <span className="text-sm font-medium text-primary">{school.name}</span>
+                  <button
+                    onClick={() => handleDeleteSchool(school.id)}
+                    className="p-2 text-secondary hover:text-danger hover:bg-danger/10 rounded-lg transition-all opacity-0 group-hover:opacity-100"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </button>
+                </div>
+              ))
+            )}
           </div>
         </motion.div>
       </div>

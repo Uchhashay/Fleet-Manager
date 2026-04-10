@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { db, auth } from '../lib/firebase';
-import { collection, getDocs, addDoc, serverTimestamp, query, orderBy } from 'firebase/firestore';
-import { Bus, Staff, DailyRecord } from '../types';
+import { collection, getDocs, addDoc, serverTimestamp, query, orderBy, onSnapshot } from 'firebase/firestore';
+import { Bus, Staff, DailyRecord, School } from '../types';
 import { formatCurrency, cn } from '../lib/utils';
 import { handleFirestoreError, OperationType } from '../lib/firebase-utils';
 import { Save, Plus, AlertCircle, CheckCircle2, Bus as BusIcon, Calendar, ChevronRight, ChevronLeft, ClipboardList } from 'lucide-react';
@@ -16,6 +16,7 @@ export function DailyEntry() {
   const [step, setStep] = useState(1);
   const [buses, setBuses] = useState<Bus[]>([]);
   const [staff, setStaff] = useState<Staff[]>([]);
+  const [schools, setSchools] = useState<School[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null);
@@ -27,6 +28,8 @@ export function DailyEntry() {
     helper_id: '',
     school_morning: 0,
     school_evening: 0,
+    school_morning_name: '',
+    school_evening_name: '',
     charter_morning: 0,
     charter_evening: 0,
     private_booking: 0,
@@ -52,6 +55,14 @@ export function DailyEntry() {
 
   useEffect(() => {
     fetchInitialData();
+
+    // Listen to schools
+    const qSchools = query(collection(db, 'schools'), orderBy('name'));
+    const unsubscribeSchools = onSnapshot(qSchools, (snap) => {
+      setSchools(snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as School)));
+    });
+
+    return () => unsubscribeSchools();
   }, []);
 
   async function fetchInitialData() {
@@ -158,6 +169,8 @@ export function DailyEntry() {
         ...prev,
         school_morning: 0,
         school_evening: 0,
+        school_morning_name: '',
+        school_evening_name: '',
         charter_morning: 0,
         charter_evening: 0,
         private_booking: 0,
@@ -366,12 +379,32 @@ export function DailyEntry() {
                     <h3 className="text-[10px] font-bold text-secondary uppercase tracking-widest">School Staff Route</h3>
                     <div className="grid grid-cols-2 gap-4">
                       <div className="space-y-2">
-                        <label className="label !mb-0 text-[10px]">Morning (₹)</label>
-                        <input type="number" inputMode="numeric" name="school_morning" value={formData.school_morning || ''} onChange={handleInputChange} className="input font-mono" placeholder="0" />
+                        <label className="label !mb-0 text-[10px]">Morning School</label>
+                        <select
+                          name="school_morning_name"
+                          value={formData.school_morning_name}
+                          onChange={handleInputChange}
+                          className="input"
+                        >
+                          <option value="">Select School</option>
+                          {schools.map(s => (
+                            <option key={s.id} value={s.name}>{s.name}</option>
+                          ))}
+                        </select>
                       </div>
                       <div className="space-y-2">
-                        <label className="label !mb-0 text-[10px]">Evening (₹)</label>
-                        <input type="number" inputMode="numeric" name="school_evening" value={formData.school_evening || ''} onChange={handleInputChange} className="input font-mono" placeholder="0" />
+                        <label className="label !mb-0 text-[10px]">Evening School</label>
+                        <select
+                          name="school_evening_name"
+                          value={formData.school_evening_name}
+                          onChange={handleInputChange}
+                          className="input"
+                        >
+                          <option value="">Select School</option>
+                          {schools.map(s => (
+                            <option key={s.id} value={s.name}>{s.name}</option>
+                          ))}
+                        </select>
                       </div>
                     </div>
                   </div>
