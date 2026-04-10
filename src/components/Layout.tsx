@@ -76,7 +76,7 @@ export function Layout() {
       label: 'Monthly', 
       path: '/monthly', 
       icon: Calendar, 
-      roles: ['admin'] 
+      roles: ['admin', 'accountant'] 
     },
     { 
       label: 'Reports', 
@@ -88,13 +88,13 @@ export function Layout() {
       label: 'Staff', 
       path: '/staff', 
       icon: Users, 
-      roles: ['admin'] 
+      roles: ['admin', 'accountant'] 
     },
     { 
       label: 'Salaries', 
       path: '/salaries', 
       icon: IndianRupee, 
-      roles: ['admin'] 
+      roles: ['admin', 'accountant'] 
     },
     { 
       label: 'Buses', 

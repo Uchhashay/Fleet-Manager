@@ -91,7 +91,7 @@ export default function App() {
               </ProtectedRoute>
             } />
             <Route path="staff" element={
-              <ProtectedRoute allowedRoles={['admin']}>
+              <ProtectedRoute allowedRoles={['admin', 'accountant']}>
                 <StaffManager />
               </ProtectedRoute>
             } />
@@ -101,7 +101,7 @@ export default function App() {
               </ProtectedRoute>
             } />
             <Route path="salaries" element={
-              <ProtectedRoute allowedRoles={['admin']}>
+              <ProtectedRoute allowedRoles={['admin', 'accountant']}>
                 <SalaryManager />
               </ProtectedRoute>
             } />
