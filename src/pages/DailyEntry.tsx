@@ -9,7 +9,10 @@ import { motion, AnimatePresence } from 'framer-motion';
 
 import { FUEL_TYPES } from '../constants';
 
+import { useAuth } from '../contexts/AuthContext';
+
 export function DailyEntry() {
+  const { profile } = useAuth();
   const [step, setStep] = useState(1);
   const [buses, setBuses] = useState<Bus[]>([]);
   const [staff, setStaff] = useState<Staff[]>([]);
@@ -38,6 +41,14 @@ export function DailyEntry() {
     notes: '',
     paid_by: 'accountant' as 'owner' | 'accountant'
   });
+
+  useEffect(() => {
+    if (profile?.role === 'admin') {
+      setFormData(prev => ({ ...prev, paid_by: 'owner' }));
+    } else {
+      setFormData(prev => ({ ...prev, paid_by: 'accountant' }));
+    }
+  }, [profile?.role]);
 
   useEffect(() => {
     fetchInitialData();
@@ -156,7 +167,8 @@ export function DailyEntry() {
         driver_duty_paid: 0,
         helper_duty_payable: 0,
         helper_duty_paid: 0,
-        notes: ''
+        notes: '',
+        paid_by: profile?.role === 'admin' ? 'owner' : 'accountant'
       }));
     } catch (error: any) {
       console.error('Error saving record:', error);
@@ -256,7 +268,6 @@ export function DailyEntry() {
                       >
                         <BusIcon className="mb-3 h-5 w-5 stroke-[1.5px]" />
                         <span className="text-xs font-bold tracking-tight">{bus.registration_number}</span>
-                        <span className="text-[10px] opacity-60 font-medium">{bus.name}</span>
                       </button>
                     ))}
                   </div>

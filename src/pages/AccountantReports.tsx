@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { db, auth } from '../lib/firebase';
 import { collection, query, where, getDocs, Timestamp } from 'firebase/firestore';
-import { format, startOfMonth, endOfMonth } from 'date-fns';
+import { format, startOfMonth, endOfMonth, startOfToday, endOfToday, startOfWeek, subDays } from 'date-fns';
 import { 
   BarChart3, 
   Download, 
@@ -40,7 +40,11 @@ export function AccountantReports() {
   const { profile } = useAuth();
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
-  const [month, setMonth] = useState(format(new Date(), 'yyyy-MM'));
+  const [rangeType, setRangeType] = useState<'today' | 'weekly' | 'monthly' | 'custom'>('monthly');
+  const [customRange, setCustomRange] = useState({
+    start: format(startOfMonth(new Date()), 'yyyy-MM-dd'),
+    end: format(new Date(), 'yyyy-MM-dd')
+  });
   const [summary, setSummary] = useState({
     totalCollection: 0,
     totalFuel: 0,
@@ -53,13 +57,33 @@ export function AccountantReports() {
 
   useEffect(() => {
     fetchReportData();
-  }, [month]);
+  }, [rangeType, customRange]);
 
   async function fetchReportData() {
     setLoading(true);
     try {
-      const start = format(startOfMonth(new Date(month)), 'yyyy-MM-dd');
-      const end = format(endOfMonth(new Date(month)), 'yyyy-MM-dd');
+      let start: string;
+      let end: string;
+
+      const now = new Date();
+
+      if (rangeType === 'today') {
+        start = format(startOfToday(), 'yyyy-MM-dd');
+        end = format(endOfToday(), 'yyyy-MM-dd');
+      } else if (rangeType === 'weekly') {
+        start = format(startOfWeek(now, { weekStartsOn: 1 }), 'yyyy-MM-dd');
+        end = format(endOfToday(), 'yyyy-MM-dd');
+      } else if (rangeType === 'monthly') {
+        start = format(startOfMonth(now), 'yyyy-MM-dd');
+        end = format(endOfMonth(now), 'yyyy-MM-dd');
+      } else {
+        start = customRange.start;
+        end = customRange.end;
+      }
+
+      const startDate = new Date(start);
+      const endDate = new Date(end);
+      endDate.setHours(23, 59, 59, 999);
 
       // Fetch Buses
       const busesSnap = await getDocs(collection(db, 'buses'));
@@ -107,8 +131,8 @@ export function AccountantReports() {
       // Fetch Fee Collections
       let feeQuery = query(
         collection(db, 'fee_collections'),
-        where('date', '>=', Timestamp.fromDate(startOfMonth(new Date(month)))),
-        where('date', '<=', Timestamp.fromDate(endOfMonth(new Date(month))))
+        where('date', '>=', Timestamp.fromDate(startDate)),
+        where('date', '<=', Timestamp.fromDate(endDate))
       );
       if (profile?.role === 'accountant') {
         feeQuery = query(feeQuery, where('recorded_by', '==', auth.currentUser?.uid));
@@ -192,19 +216,49 @@ export function AccountantReports() {
             <BarChart3 className="h-4 w-4 stroke-[1.5px]" />
             <span className="text-[10px] font-bold uppercase tracking-[0.2em]">Financial Intelligence</span>
           </div>
-          <h1 className="text-3xl font-bold tracking-tight text-primary">Monthly Reports</h1>
+          <h1 className="text-3xl font-bold tracking-tight text-primary">Performance Reports</h1>
         </div>
         
-        <div className="flex items-center space-x-4">
-          <div className="relative">
-            <input
-              type="month"
-              value={month}
-              onChange={(e) => setMonth(e.target.value)}
-              className="input !py-2 !pl-10 !pr-4 bg-surface appearance-none"
-            />
-            <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-secondary stroke-[1.5px]" />
+        <div className="flex flex-wrap items-center gap-4">
+          <div className="flex items-center bg-surface border border-border rounded-xl p-1 shadow-sm">
+            {(['today', 'weekly', 'monthly', 'custom'] as const).map((type) => (
+              <button
+                key={type}
+                onClick={() => setRangeType(type)}
+                className={cn(
+                  "px-4 py-1.5 text-[10px] font-bold uppercase tracking-wider rounded-lg transition-all",
+                  rangeType === type ? "bg-accent text-white shadow-md" : "text-secondary hover:text-primary"
+                )}
+              >
+                {type}
+              </button>
+            ))}
           </div>
+
+          {rangeType === 'custom' && (
+            <div className="flex items-center space-x-2">
+              <div className="relative">
+                <input
+                  type="date"
+                  value={customRange.start}
+                  onChange={(e) => setCustomRange({ ...customRange, start: e.target.value })}
+                  className="input !py-2 !pl-10 !pr-4 bg-surface appearance-none text-xs"
+                />
+                <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-secondary stroke-[1.5px]" />
+              </div>
+              <span className="text-secondary font-bold">to</span>
+              <div className="relative">
+                <input
+                  type="date"
+                  value={customRange.end}
+                  onChange={(e) => setCustomRange({ ...customRange, end: e.target.value })}
+                  className="input !py-2 !pl-10 !pr-4 bg-surface appearance-none text-xs"
+                />
+                <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-secondary stroke-[1.5px]" />
+              </div>
+            </div>
+          )}
+
           <button className="btn-secondary flex items-center space-x-2 !py-2">
             <Download className="h-4 w-4 stroke-[1.5px]" />
             <span>Export</span>
@@ -331,7 +385,10 @@ export function AccountantReports() {
 
               <div className="mt-6 pt-4 border-t border-border/50 flex items-center justify-end">
                 <button 
-                  onClick={() => navigate(`/monthly?busId=${report.busId}&month=${month}`)}
+                  onClick={() => {
+                    const start = rangeType === 'custom' ? customRange.start : format(startOfMonth(new Date()), 'yyyy-MM-dd');
+                    navigate(`/monthly?busId=${report.busId}&start=${start}`);
+                  }}
                   className="text-[10px] font-bold text-accent uppercase tracking-widest flex items-center space-x-1 hover:space-x-2 transition-all"
                 >
                   <span>View Details</span>

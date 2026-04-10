@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { db, auth } from '../lib/firebase';
-import { collection, query, where, getDocs, Timestamp, addDoc, serverTimestamp, orderBy } from 'firebase/firestore';
+import { collection, query, where, getDocs, Timestamp, addDoc, serverTimestamp, orderBy, doc, getDoc } from 'firebase/firestore';
 import { format, startOfMonth, endOfMonth } from 'date-fns';
 import { 
   Download, 
@@ -35,15 +35,21 @@ interface LedgerEntry {
   source: 'Daily Entry' | 'Bus Expense' | 'Company Expense' | 'Fee Collection' | 'Manual Entry';
   paid_by?: 'owner' | 'accountant';
   staff_id?: string;
+  linked_id?: string;
+  running_balance?: number;
+  created_at?: any;
 }
 
 export function Cashbook() {
   const { profile } = useAuth();
   const location = useLocation();
   const [entries, setEntries] = useState<LedgerEntry[]>([]);
+  const [totalCashInHand, setTotalCashInHand] = useState(0);
+  const [openingBalance, setOpeningBalance] = useState(0);
   const [staff, setStaff] = useState<Staff[]>([]);
   const [loading, setLoading] = useState(true);
-  const [viewMode, setViewMode] = useState<'accountant' | 'owner'>('accountant');
+  const [message, setMessage] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
+  const [viewMode, setViewMode] = useState<'accountant' | 'owner'>(profile?.role === 'admin' ? 'owner' : 'accountant');
   const [activeForm, setActiveForm] = useState<'in' | 'out' | null>(null);
   const [filters, setFilters] = useState({
     startDate: format(startOfMonth(new Date()), 'yyyy-MM-dd'),
@@ -61,6 +67,16 @@ export function Cashbook() {
   });
 
   useEffect(() => {
+    if (profile?.role) {
+      setViewMode(profile.role === 'admin' ? 'owner' : 'accountant');
+      setFormData(prev => ({
+        ...prev,
+        paid_by: profile.role === 'admin' ? 'owner' : 'accountant'
+      }));
+    }
+  }, [profile?.role]);
+
+  useEffect(() => {
     fetchLedger();
     fetchStaff();
   }, [filters, viewMode]);
@@ -72,7 +88,7 @@ export function Cashbook() {
       setFormData(prev => ({
         ...prev,
         type: state.action!,
-        category: state.action === 'in' ? 'owner_transfer' : 'overhead',
+        category: state.action === 'in' ? 'owner_transfer' : 'salary',
         paid_by: profile?.role === 'admin' ? 'owner' : 'accountant'
       }));
     }
@@ -108,6 +124,7 @@ export function Cashbook() {
 
         const inflow = (data.school_morning || 0) + (data.school_evening || 0) + (data.charter_morning || 0) + (data.charter_evening || 0) + (data.private_booking || 0);
         const outflow = (data.fuel_amount || 0) + (data.driver_duty_paid || 0) + (data.helper_duty_paid || 0);
+        const createdAt = data.created_at;
 
         if (inflow > 0) {
           dailyEntries.push({
@@ -118,7 +135,8 @@ export function Cashbook() {
             amount: inflow,
             description: `Bus ${data.bus_id} collections`,
             source: 'Daily Entry',
-            paid_by: paidBy
+            paid_by: paidBy,
+            created_at: createdAt
           });
         }
         if (outflow > 0) {
@@ -130,7 +148,8 @@ export function Cashbook() {
             amount: outflow,
             description: `Fuel & Duty for Bus ${data.bus_id}`,
             source: 'Daily Entry',
-            paid_by: paidBy
+            paid_by: paidBy,
+            created_at: createdAt
           });
         }
       });
@@ -154,7 +173,8 @@ export function Cashbook() {
             amount: data.amount,
             description: data.description || `Bus ${data.bus_id} expense`,
             source: 'Bus Expense' as const,
-            paid_by: paidBy
+            paid_by: paidBy,
+            created_at: data.created_at
           };
         })
         .filter(e => e.paid_by === viewMode);
@@ -178,7 +198,8 @@ export function Cashbook() {
             amount: data.amount,
             description: data.description || 'Company expense',
             source: 'Company Expense' as const,
-            paid_by: paidBy
+            paid_by: paidBy,
+            created_at: data.created_at
           };
         })
         .filter(e => e.paid_by === viewMode);
@@ -203,7 +224,8 @@ export function Cashbook() {
             amount: data.amount,
             description: `${data.student_name} - ${data.school_name}`,
             source: 'Fee Collection' as const,
-            paid_by: paidBy
+            paid_by: paidBy,
+            created_at: data.created_at
           };
         })
         .filter(e => e.paid_by === viewMode);
@@ -228,13 +250,78 @@ export function Cashbook() {
             description: data.description,
             source: 'Manual Entry' as const,
             paid_by: paidBy,
-            staff_id: data.staff_id
+            staff_id: data.staff_id,
+            linked_id: (data as any).linked_id,
+            created_at: data.created_at
           } as LedgerEntry;
         })
-        .filter(e => e.paid_by === viewMode);
+        .filter(e => e.paid_by === viewMode && !e.linked_id);
 
-      const allEntries = [...dailyEntries, ...busEntries, ...compEntries, ...feeEntries, ...manualEntries].sort((a, b) => b.date.localeCompare(a.date));
+      // Calculate Running Balance
+      // 1. Get starting balance before startDate
+      const beforeQuery = query(
+        collection(db, 'cash_transactions'),
+        where('date', '<', startDate)
+      );
+      const beforeSnap = await getDocs(beforeQuery);
+      
+      // Get global opening balance from settings
+      const settingsDoc = await getDoc(doc(db, 'settings', 'opening_balances'));
+      const globalOpening = settingsDoc.exists() ? (settingsDoc.data()[viewMode] || 0) : 0;
+      
+      let runningBalance = globalOpening;
+      beforeSnap.docs.forEach(doc => {
+        const data = doc.data();
+        if (data.paid_by === viewMode) {
+          const amount = Number(data.amount) || 0;
+          if (data.type === 'in') runningBalance += amount;
+          else runningBalance -= amount;
+        }
+      });
+      setOpeningBalance(runningBalance);
+
+      // 2. Combine and sort ascending to calculate running balance
+      const allEntries = [...dailyEntries, ...busEntries, ...compEntries, ...feeEntries, ...manualEntries].sort((a, b) => {
+        const dateCompare = a.date.localeCompare(b.date);
+        if (dateCompare !== 0) return dateCompare;
+        
+        // If same date, use created_at
+        const aTime = a.created_at instanceof Timestamp ? a.created_at.toMillis() : 0;
+        const bTime = b.created_at instanceof Timestamp ? b.created_at.toMillis() : 0;
+        return aTime - bTime;
+      });
+
+      allEntries.forEach(entry => {
+        if (entry.type === 'Inflow') runningBalance += entry.amount;
+        else runningBalance -= entry.amount;
+        entry.running_balance = runningBalance;
+      });
+
+      // 3. Sort descending for display
+      allEntries.sort((a, b) => {
+        const dateCompare = b.date.localeCompare(a.date);
+        if (dateCompare !== 0) return dateCompare;
+        
+        const aTime = a.created_at instanceof Timestamp ? a.created_at.toMillis() : 0;
+        const bTime = b.created_at instanceof Timestamp ? b.created_at.toMillis() : 0;
+        return bTime - aTime;
+      });
+
       setEntries(allEntries);
+
+      // Calculate Total Cash in Hand (Cumulative - matches Dashboard)
+      const allCashSnap = await getDocs(collection(db, 'cash_transactions'));
+      let balance = globalOpening;
+      allCashSnap.docs.forEach(doc => {
+        const data = doc.data();
+        const paidBy = data.paid_by || 'accountant';
+        if (paidBy === viewMode) {
+          const amount = Number(data.amount) || 0;
+          if (data.type === 'in') balance += amount;
+          else balance -= amount;
+        }
+      });
+      setTotalCashInHand(balance);
     } catch (error) {
       console.error('Error fetching ledger:', error);
     } finally {
@@ -361,6 +448,34 @@ export function Cashbook() {
         </div>
       </header>
 
+      {message && (
+        <motion.div
+          initial={{ opacity: 0, y: -10 }}
+          animate={{ opacity: 1, y: 0 }}
+          className={cn(
+            "p-4 rounded-xl border flex items-center justify-between",
+            message.type === 'success' ? "bg-success/10 border-success/20 text-success" :
+            message.type === 'error' ? "bg-danger/10 border-danger/20 text-danger" :
+            "bg-accent/10 border-accent/20 text-accent"
+          )}
+        >
+          <div className="flex items-center space-x-3">
+            <div className={cn(
+              "h-8 w-8 rounded-lg flex items-center justify-center",
+              message.type === 'success' ? "bg-success text-background" :
+              message.type === 'error' ? "bg-danger text-background" :
+              "bg-accent text-background"
+            )}>
+              <Receipt className="h-4 w-4" />
+            </div>
+            <p className="text-sm font-bold">{message.text}</p>
+          </div>
+          <button onClick={() => setMessage(null)} className="p-1 hover:bg-black/5 rounded-lg">
+            <X className="h-4 w-4" />
+          </button>
+        </motion.div>
+      )}
+
       {/* Quick Action Buttons */}
       {(profile?.role === 'admin' || profile?.role === 'accountant') && (
         <div className="grid gap-6 sm:grid-cols-2">
@@ -368,6 +483,11 @@ export function Cashbook() {
             whileHover={{ y: -4, scale: 1.01 }}
             whileTap={{ scale: 0.98 }}
             onClick={() => {
+              if (profile?.role === 'admin' && viewMode === 'accountant') {
+                setMessage({ type: 'info', text: 'Please toggle to "Owner" mode to record cash entries.' });
+                setTimeout(() => setMessage(null), 5000);
+                return;
+              }
               setFormData({ 
                 ...formData, 
                 type: 'in', 
@@ -411,10 +531,15 @@ export function Cashbook() {
             whileHover={{ y: -4, scale: 1.01 }}
             whileTap={{ scale: 0.98 }}
             onClick={() => {
+              if (profile?.role === 'admin' && viewMode === 'accountant') {
+                setMessage({ type: 'info', text: 'Please toggle to "Owner" mode to record cash entries.' });
+                setTimeout(() => setMessage(null), 5000);
+                return;
+              }
               setFormData({ 
                 ...formData, 
                 type: 'out', 
-                category: 'overhead', 
+                category: 'salary', 
                 paid_by: profile?.role === 'admin' ? 'owner' : 'accountant' 
               });
               setActiveForm(activeForm === 'out' ? null : 'out');
@@ -523,14 +648,10 @@ export function Cashbook() {
                         </>
                       ) : (
                         <>
-                          <option value="overhead">Overhead/Office Expense</option>
                           <option value="salary">Salary Payment</option>
                           <option value="salary_advance">Salary Advance</option>
                           <option value="duty_payment">Duty Payment</option>
-                          <option value="bus_expense">Bus Expense</option>
-                          <option value="loan_payment">Loan Payment</option>
-                          <option value="insurance">Insurance</option>
-                          <option value="misc">Miscellaneous Expense</option>
+                          <option value="misc">Miscellaneous</option>
                         </>
                       )}
                   </select>
@@ -656,26 +777,47 @@ export function Cashbook() {
               <Wallet className="h-5 w-5 stroke-[1.5px]" />
             </div>
             <div className="text-right">
-              <span className="text-[10px] font-bold text-background/60 uppercase tracking-widest block">Net Balance</span>
-              <span className="text-[10px] font-medium text-background/40">{viewMode === 'owner' ? "Owner's Funds" : "Accountant's Cash"}</span>
+              <span className="text-[10px] font-bold text-background/60 uppercase tracking-widest block">Current Balance</span>
+              <span className="text-[10px] font-medium text-background/40">{viewMode === 'owner' ? "Owner's Total Cash" : "Accountant's Total Cash"}</span>
             </div>
           </div>
           <div className="relative z-10">
             <h3 className="text-4xl font-bold text-background tracking-tighter font-mono mb-6">
-              {formatCurrency(netBalance)}
+              {formatCurrency(totalCashInHand)}
             </h3>
-            <div className="grid grid-cols-2 gap-4 border-t border-background/10 pt-6">
+            <div className="grid grid-cols-2 gap-y-4 gap-x-6 border-t border-background/10 pt-6">
+              <div className="space-y-1">
+                <div className="flex items-center space-x-1.5">
+                  <div className="h-1.5 w-1.5 rounded-full bg-background/40" />
+                  <p className="text-[9px] font-bold uppercase text-background/40 tracking-wider">Opening Bal.</p>
+                </div>
+                <p className="text-sm font-bold text-background/80 font-mono">{formatCurrency(openingBalance)}</p>
+              </div>
+              <div className="space-y-1">
+                <div className="flex items-center space-x-1.5">
+                  <div className="h-1.5 w-1.5 rounded-full bg-accent" />
+                  <p className="text-[9px] font-bold uppercase text-background/40 tracking-wider">Period Net</p>
+                </div>
+                <p className="text-sm font-bold text-accent font-mono">{formatCurrency(totals.inflow - totals.outflow)}</p>
+              </div>
+              <div className="space-y-1">
+                <div className="flex items-center space-x-1.5">
+                  <div className="h-1.5 w-1.5 rounded-full bg-primary/40" />
+                  <p className="text-[9px] font-bold uppercase text-background/40 tracking-wider">Closing Bal.</p>
+                </div>
+                <p className="text-sm font-bold text-background/80 font-mono">{formatCurrency(openingBalance + totals.inflow - totals.outflow)}</p>
+              </div>
               <div className="space-y-1">
                 <div className="flex items-center space-x-1.5">
                   <div className="h-1.5 w-1.5 rounded-full bg-success" />
-                  <p className="text-[9px] font-bold uppercase text-background/40 tracking-wider">Total Inflow</p>
+                  <p className="text-[9px] font-bold uppercase text-background/40 tracking-wider">Period Inflow</p>
                 </div>
                 <p className="text-sm font-bold text-success font-mono">{formatCurrency(totals.inflow)}</p>
               </div>
               <div className="space-y-1">
                 <div className="flex items-center space-x-1.5">
                   <div className="h-1.5 w-1.5 rounded-full bg-warning" />
-                  <p className="text-[9px] font-bold uppercase text-background/40 tracking-wider">Total Outflow</p>
+                  <p className="text-[9px] font-bold uppercase text-background/40 tracking-wider">Period Outflow</p>
                 </div>
                 <p className="text-sm font-bold text-warning font-mono">{formatCurrency(totals.outflow)}</p>
               </div>
@@ -695,75 +837,95 @@ export function Cashbook() {
                 <th>Category</th>
                 <th>Description</th>
                 <th className="text-right">Amount</th>
+                <th className="text-right">Cash in Hand</th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={5} className="py-12 text-center">
+                  <td colSpan={6} className="py-12 text-center">
                     <div className="h-6 w-6 animate-spin rounded-full border-2 border-accent border-t-transparent mx-auto"></div>
                   </td>
                 </tr>
-              ) : entries.length > 0 ? (
-                entries.map((entry, idx) => (
-                  <motion.tr 
-                    key={entry.id}
-                    initial={{ opacity: 0, y: 5 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: idx * 0.02 }}
-                  >
-                    <td className="text-secondary font-medium whitespace-nowrap">
-                      {format(new Date(entry.date), 'dd MMM yyyy')}
-                    </td>
-                    <td>
-                      <div className="flex items-center space-x-2">
-                        <div className={cn(
-                          "h-6 w-6 rounded-full flex items-center justify-center",
-                          entry.source === 'Daily Entry' ? "bg-accent/10 text-accent" : 
-                          entry.source === 'Bus Expense' ? "bg-warning/10 text-warning" : 
-                          entry.source === 'Fee Collection' ? "bg-success/10 text-success" :
-                          entry.source === 'Manual Entry' ? "bg-primary/10 text-primary" :
-                          "bg-secondary/10 text-secondary"
-                        )}>
-                          {entry.source === 'Daily Entry' ? <BusIcon className="h-3 w-3 stroke-[1.5px]" /> : 
-                           entry.source === 'Bus Expense' ? <Receipt className="h-3 w-3 stroke-[1.5px]" /> : 
-                           entry.source === 'Fee Collection' ? <GraduationCap className="h-3 w-3 stroke-[1.5px]" /> :
-                           entry.source === 'Manual Entry' ? <Wallet className="h-3 w-3 stroke-[1.5px]" /> :
-                           <Building2 className="h-3 w-3 stroke-[1.5px]" />}
-                        </div>
-                        <span className="text-[10px] font-bold text-secondary uppercase tracking-widest">{entry.source}</span>
-                      </div>
-                    </td>
-                    <td>
-                      <span className="font-bold text-primary">{entry.category}</span>
-                    </td>
-                    <td className="max-w-xs">
-                      <div className="flex flex-col">
-                        <span className="text-secondary font-medium truncate">{entry.description}</span>
-                        {entry.staff_id && (
-                          <span className="text-[9px] text-accent font-bold uppercase tracking-wider mt-0.5">
-                            Staff: {staff.find(s => s.id === entry.staff_id)?.full_name || 'Unknown'}
-                          </span>
-                        )}
-                      </div>
-                    </td>
-                    <td className={cn(
-                      "text-right font-bold font-mono",
-                      entry.type === 'Inflow' ? "text-success" : "text-danger"
-                    )}>
-                      <div className="flex items-center justify-end space-x-1">
-                        <span>{entry.type === 'Inflow' ? '+' : '-'}{formatCurrency(entry.amount)}</span>
-                        {entry.type === 'Inflow' ? <ArrowUpRight className="h-3 w-3" /> : <ArrowDownRight className="h-3 w-3" />}
-                      </div>
-                    </td>
-                  </motion.tr>
-                ))
               ) : (
-                <tr>
-                  <td colSpan={5} className="py-12 text-center text-secondary font-medium">
-                    No entries found for this period
-                  </td>
-                </tr>
+                <>
+                  {entries.map((entry, idx) => (
+                    <motion.tr 
+                      key={entry.id}
+                      initial={{ opacity: 0, y: 5 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ delay: idx * 0.02 }}
+                    >
+                      <td className="text-secondary font-medium whitespace-nowrap">
+                        {format(new Date(entry.date), 'dd MMM yyyy')}
+                      </td>
+                      <td>
+                        <div className="flex items-center space-x-2">
+                          <div className={cn(
+                            "h-6 w-6 rounded-full flex items-center justify-center",
+                            entry.source === 'Daily Entry' ? "bg-accent/10 text-accent" : 
+                            entry.source === 'Bus Expense' ? "bg-warning/10 text-warning" : 
+                            entry.source === 'Fee Collection' ? "bg-success/10 text-success" :
+                            entry.source === 'Manual Entry' ? "bg-primary/10 text-primary" :
+                            "bg-secondary/10 text-secondary"
+                          )}>
+                            {entry.source === 'Daily Entry' ? <BusIcon className="h-3 w-3 stroke-[1.5px]" /> : 
+                             entry.source === 'Bus Expense' ? <Receipt className="h-3 w-3 stroke-[1.5px]" /> : 
+                             entry.source === 'Fee Collection' ? <GraduationCap className="h-3 w-3 stroke-[1.5px]" /> :
+                             entry.source === 'Manual Entry' ? <Wallet className="h-3 w-3 stroke-[1.5px]" /> :
+                             <Building2 className="h-3 w-3 stroke-[1.5px]" />}
+                          </div>
+                          <span className="text-[10px] font-bold text-secondary uppercase tracking-widest">{entry.source}</span>
+                        </div>
+                      </td>
+                      <td>
+                        <span className="font-bold text-primary">{entry.category}</span>
+                      </td>
+                      <td className="max-w-xs">
+                        <div className="flex flex-col">
+                          <span className="text-secondary font-medium truncate">{entry.description}</span>
+                          {entry.staff_id && (
+                            <span className="text-[9px] text-accent font-bold uppercase tracking-wider mt-0.5">
+                              Staff: {staff.find(s => s.id === entry.staff_id)?.full_name || 'Unknown'}
+                            </span>
+                          )}
+                        </div>
+                      </td>
+                      <td className={cn(
+                        "text-right font-bold font-mono",
+                        entry.type === 'Inflow' ? "text-success" : "text-danger"
+                      )}>
+                        <div className="flex items-center justify-end space-x-1">
+                          <span>{entry.type === 'Inflow' ? '+' : '-'}{formatCurrency(entry.amount)}</span>
+                          {entry.type === 'Inflow' ? <ArrowUpRight className="h-3 w-3" /> : <ArrowDownRight className="h-3 w-3" />}
+                        </div>
+                      </td>
+                      <td className="text-right font-bold font-mono text-primary">
+                        {formatCurrency(entry.running_balance || 0)}
+                      </td>
+                    </motion.tr>
+                  ))}
+                  
+                  {entries.length === 0 && (
+                    <tr>
+                      <td colSpan={6} className="py-12 text-center text-secondary font-medium">
+                        No entries found for this period
+                      </td>
+                    </tr>
+                  )}
+
+                  {/* Opening Balance Row */}
+                  <tr className="bg-surface/30 border-t-2 border-border/50">
+                    <td className="text-secondary font-bold italic">Before {format(new Date(filters.startDate), 'dd MMM yyyy')}</td>
+                    <td colSpan={3} className="text-center text-[10px] font-bold uppercase tracking-widest text-secondary/50">Opening Balance Brought Forward</td>
+                    <td className="text-right font-bold font-mono text-secondary italic">
+                      {formatCurrency(openingBalance)}
+                    </td>
+                    <td className="text-right font-bold font-mono text-primary italic">
+                      {formatCurrency(openingBalance)}
+                    </td>
+                  </tr>
+                </>
               )}
             </tbody>
           </table>

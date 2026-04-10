@@ -15,7 +15,8 @@ const COLLECTIONS_TO_WIPE = [
   'staff',
   'bus_expenses',
   'fee_collections',
-  'accountant_transactions'
+  'accountant_transactions',
+  'settings'
 ];
 
 export function Cleanup() {

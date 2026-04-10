@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { db, auth } from '../lib/firebase';
-import { collection, query, where, getDocs, orderBy, limit, Timestamp, onSnapshot } from 'firebase/firestore';
+import { collection, query, where, getDocs, orderBy, limit, Timestamp, onSnapshot, doc, getDoc } from 'firebase/firestore';
 import { format, startOfMonth, endOfMonth } from 'date-fns';
 import { 
   Wallet, 
@@ -57,46 +57,48 @@ export function AccountantDashboard() {
     if (profile?.role === 'admin') {
       // Listen to profiles
       const qProfiles = query(collection(db, 'profiles'), where('role', '==', 'accountant'));
-      const unsubscribeProfiles = onSnapshot(qProfiles, (snap) => {
+      const unsubscribeProfiles = onSnapshot(qProfiles, async (snap) => {
         const profileList = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Profile));
         
         // Also fetch from staff collection to be safe
-        getDocs(query(collection(db, 'staff'), where('role', '==', 'accountant'))).then(staffSnap => {
-          const staffList = staffSnap.docs.map(doc => ({ 
-            id: doc.id, 
-            full_name: doc.data().full_name,
-            role: 'accountant' as any,
-            email: ''
-          } as Profile));
+        const staffSnap = await getDocs(query(collection(db, 'staff'), where('role', '==', 'accountant')));
+        const staffList = staffSnap.docs.map(doc => ({ 
+          id: doc.id, 
+          full_name: doc.data().full_name,
+          role: 'accountant' as any,
+          email: ''
+        } as Profile));
 
-          // Merge lists, avoiding duplicates by ID
-          const merged = [...profileList];
-          staffList.forEach(s => {
-            if (!merged.find(p => p.id === s.id)) {
-              merged.push(s);
+        // Merge lists, avoiding duplicates by ID
+        const merged = [...profileList];
+        staffList.forEach(s => {
+          if (!merged.find(p => p.id === s.id)) {
+            merged.push(s);
+          }
+        });
+        
+        setAccountants(merged);
+        
+        // Fetch balances for all
+        const settingsSnap = await getDoc(doc(db, 'settings', 'opening_balances'));
+        const openingBalances = settingsSnap.exists() ? settingsSnap.data() as any : { owner: 0, accountant: 0 };
+
+        merged.forEach(async (acc) => {
+          const cashSnap = await getDocs(query(
+            collection(db, 'cash_transactions'),
+            where('created_by', '==', acc.id)
+          ));
+          let bal = (acc.role === 'admin' || acc.id === auth.currentUser?.uid) ? (openingBalances.owner || 0) : (openingBalances.accountant || 0);
+          cashSnap.docs.forEach(doc => {
+            const t = doc.data();
+            const paidBy = t.paid_by || 'accountant';
+            // Only count towards this accountant's balance if they handled it
+            if (paidBy === 'accountant') {
+              if (t.type === 'in') bal += t.amount;
+              else bal -= t.amount;
             }
           });
-          
-          setAccountants(merged);
-          
-          // Fetch balances for all
-          merged.forEach(async (acc) => {
-            const cashSnap = await getDocs(query(
-              collection(db, 'cash_transactions'),
-              where('created_by', '==', acc.id)
-            ));
-            let bal = 0;
-            cashSnap.docs.forEach(doc => {
-              const t = doc.data();
-              const paidBy = t.paid_by || 'accountant';
-              // Only count towards this accountant's balance if they handled it
-              if (paidBy === 'accountant') {
-                if (t.type === 'in') bal += t.amount;
-                else bal -= t.amount;
-              }
-            });
-            setStaffBalances(prev => ({ ...prev, [acc.id]: bal }));
-          });
+          setStaffBalances(prev => ({ ...prev, [acc.id]: bal }));
         });
       });
       return () => unsubscribeProfiles();
@@ -124,6 +126,16 @@ export function AccountantDashboard() {
       const startStr = format(monthStart, 'yyyy-MM-dd');
       const endStr = format(monthEnd, 'yyyy-MM-dd');
       const targetUid = selectedAccountantId;
+
+      // Fetch Buses and Staff
+      const busesSnap = await getDocs(collection(db, 'buses'));
+      const buses = busesSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as any));
+      const staffSnap = await getDocs(collection(db, 'staff'));
+      const staff = staffSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Staff));
+
+      // Fetch Opening Balances
+      const settingsSnap = await getDoc(doc(db, 'settings', 'opening_balances'));
+      const openingBalances = settingsSnap.exists() ? settingsSnap.data() as any : { owner: 0, accountant: 0 };
 
       // Fetch Daily Records for the month (only for target accountant)
       const dailySnap = await getDocs(query(
@@ -195,8 +207,8 @@ export function AccountantDashboard() {
         where('created_by', '==', targetUid)
       ));
       
-      let accountantCash = 0;
-      let ownerCash = 0;
+      let accountantCash = openingBalances.accountant || 0;
+      let ownerCash = openingBalances.owner || 0;
       const breakdown = {
         daily: 0,
         fees: 0,
@@ -361,11 +373,15 @@ export function AccountantDashboard() {
             </div>
           </div>
           <h3 className="text-4xl font-bold font-mono tracking-tighter">
-            {formatCurrency(stats.monthlyNetCash)}
+            {formatCurrency(stats.accountantCash)}
           </h3>
-          <p className="mt-1 text-[10px] opacity-70 font-medium text-background/80 mb-4">Current month's available cash</p>
+          <p className="mt-1 text-[10px] opacity-70 font-medium text-background/80 mb-4">Total cumulative cash in hand</p>
           
           <div className="mt-4 pt-4 border-t border-background/20 space-y-3">
+            <div className="flex justify-between text-[10px] font-medium">
+              <span className="opacity-70">Monthly Net Cash</span>
+              <span className="font-mono">{stats.monthlyNetCash >= 0 ? '+' : ''}{formatCurrency(stats.monthlyNetCash)}</span>
+            </div>
             <div className="flex justify-between text-[10px] font-medium">
               <span className="opacity-70">Cash Collections</span>
               <span className="font-mono">+{formatCurrency(stats.cashBreakdown.daily + stats.cashBreakdown.fees + stats.cashBreakdown.manualIn)}</span>
@@ -374,13 +390,6 @@ export function AccountantDashboard() {
               <span className="opacity-70">Cash Expenses</span>
               <span className="font-mono">-{formatCurrency(stats.cashBreakdown.expenses + stats.cashBreakdown.salary + stats.cashBreakdown.transfers)}</span>
             </div>
-            
-            {stats.accountantCash !== stats.monthlyNetCash && (
-              <div className="pt-3 border-t border-background/10 flex justify-between text-[9px] font-bold uppercase tracking-widest opacity-50">
-                <span>Total Cumulative Balance</span>
-                <span>{formatCurrency(stats.accountantCash)}</span>
-              </div>
-            )}
           </div>
         </motion.div>
 

@@ -114,6 +114,12 @@ export function Layout() {
       icon: UserCircle, 
       roles: ['admin'] 
     },
+    { 
+      label: 'Settings', 
+      path: '/settings', 
+      icon: Settings, 
+      roles: ['admin'] 
+    },
   ];
 
   const filteredNavItems = navItems.filter(item => 

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { db } from '../lib/firebase';
-import { collection, getDocs, query, where, orderBy, limit, Timestamp } from 'firebase/firestore';
+import { collection, getDocs, query, where, orderBy, limit, Timestamp, doc, getDoc } from 'firebase/firestore';
+import { handleFirestoreError, OperationType } from '../lib/firestore-errors';
 import { formatCurrency, cn } from '../lib/utils';
 import { 
   TrendingUp, 
@@ -40,7 +41,8 @@ export function Dashboard() {
     feeCollections: any[],
     cashTransactions: any[],
     buses: Bus[],
-    staff: Staff[]
+    staff: Staff[],
+    openingBalances: { owner: number, accountant: number }
   } | null>(null);
 
   const [stats, setStats] = useState({
@@ -125,6 +127,10 @@ export function Dashboard() {
       const staffSnap = await getDocs(collection(db, 'staff'));
       const staff = staffSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Staff));
 
+      // Fetch Opening Balances
+      const settingsSnap = await getDoc(doc(db, 'settings', 'opening_balances'));
+      const openingBalances = settingsSnap.exists() ? settingsSnap.data() as any : { owner: 0, accountant: 0 };
+
       setRawData({
         records,
         busExpenses,
@@ -132,11 +138,12 @@ export function Dashboard() {
         feeCollections,
         cashTransactions,
         buses,
-        staff
+        staff,
+        openingBalances
       });
 
     } catch (error) {
-      console.error('Error fetching dashboard data:', error);
+      handleFirestoreError(error, OperationType.GET, 'dashboard_data');
     } finally {
       setLoading(false);
     }
@@ -152,10 +159,11 @@ export function Dashboard() {
     const busExpenses = showCombined ? allBusExpenses : allBusExpenses.filter(e => !accountantIds.includes(e.created_by));
     const companyExpenses = showCombined ? allCompanyExpenses : allCompanyExpenses.filter(e => !accountantIds.includes(e.created_by));
     const feeCollections = showCombined ? allFeeCollections : allFeeCollections.filter(f => !accountantIds.includes(f.recorded_by));
+    const filteredCashTransactions = showCombined ? cashTransactions : cashTransactions.filter(t => !accountantIds.includes(t.created_by));
 
-    // Calculate Cash Balances
-    let accountantCash = 0;
-    let ownerCash = 0;
+    // Calculate Cash Balances (Always show total for clarity, but filter if needed)
+    let accountantCash = rawData.openingBalances?.accountant || 0;
+    let ownerCash = rawData.openingBalances?.owner || 0;
     cashTransactions.forEach(t => {
       const amount = Number(t.amount) || 0;
       const paidBy = t.paid_by || 'accountant';
@@ -180,12 +188,13 @@ export function Dashboard() {
       const date = f.date instanceof Timestamp ? f.date.toDate() : new Date(f.date);
       return date >= startOfMonth(now) && date <= endOfMonth(now);
     });
-    const currentCashTransactions = cashTransactions.filter((t: any) => t.date >= monthStartStr && t.date <= monthEndStr);
+    const currentCashTransactions = filteredCashTransactions.filter((t: any) => t.date >= monthStartStr && t.date <= monthEndStr);
 
     // Calculate KPIs
     const totalCollections = currentRecords.reduce((sum, r: any) => 
       sum + (r.school_morning || 0) + (r.school_evening || 0) + (r.charter_morning || 0) + (r.charter_evening || 0) + (r.private_booking || 0), 0) +
-      currentFeeCollections.reduce((sum, f: any) => sum + (f.amount || 0), 0);
+      currentFeeCollections.reduce((sum, f: any) => sum + (f.amount || 0), 0) +
+      currentCashTransactions.filter((t: any) => t.type === 'in' && t.category === 'misc').reduce((sum, t: any) => sum + (t.amount || 0), 0);
     
     const dailyFuel = currentRecords.reduce((sum, r: any) => sum + (r.fuel_amount || 0), 0);
     const dailyDuty = currentRecords.reduce((sum, r: any) => sum + (r.driver_duty_paid || 0) + (r.helper_duty_paid || 0), 0);
@@ -196,18 +205,22 @@ export function Dashboard() {
     const salaryPayments = currentCashTransactions
       .filter((t: any) => ['salary', 'salary_advance', 'duty_payment'].includes(t.category))
       .reduce((sum, t: any) => sum + (t.amount || 0), 0);
+    
+    const miscExpenses = currentCashTransactions
+      .filter((t: any) => t.type === 'out' && t.category === 'misc')
+      .reduce((sum, t: any) => sum + (t.amount || 0), 0);
 
     const workingDays = new Set(currentRecords.map((r: any) => r.date)).size;
 
     setStats({
       totalCollections,
       totalBusExpenses,
-      totalCompanyExpenses: totalCompanyExpenses + salaryPayments,
-      netProfit: totalCollections - totalBusExpenses - totalCompanyExpenses - salaryPayments,
+      totalCompanyExpenses: totalCompanyExpenses + salaryPayments + miscExpenses,
+      netProfit: totalCollections - totalBusExpenses - totalCompanyExpenses - salaryPayments - miscExpenses,
       workingDays,
-      accountantCash,
+      accountantCash: showCombined ? accountantCash : 0, // Hide accountant cash in owner-only mode?
       ownerCash,
-      totalCash: accountantCash + ownerCash
+      totalCash: showCombined ? (accountantCash + ownerCash) : ownerCash
     });
 
     // Bus Comparison Cards
@@ -259,13 +272,13 @@ export function Dashboard() {
       const totalExp = rs.reduce((sum, r: any) => sum + (r.fuel_amount || 0) + (r.driver_duty_paid || 0) + (r.helper_duty_paid || 0), 0) + 
                        be.reduce((sum, e: any) => sum + (e.amount || 0), 0) + 
                        ce.reduce((sum, e: any) => sum + (e.amount || 0), 0) +
-                       ct.filter((t: any) => ['salary', 'salary_advance', 'duty_payment'].includes(t.category)).reduce((sum, t: any) => sum + (t.amount || 0), 0);
+                       ct.filter((t: any) => ['salary', 'salary_advance', 'duty_payment', 'misc'].includes(t.category) && t.type === 'out').reduce((sum, t: any) => sum + (t.amount || 0), 0);
 
       return {
         name: format(month, 'MMM'),
         school,
         charter,
-        private: private_booking + fees,
+        private: private_booking + fees + ct.filter((t: any) => t.type === 'in' && t.category === 'misc').reduce((sum, t: any) => sum + (t.amount || 0), 0),
         totalExpenses: totalExp
       };
     });

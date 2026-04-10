@@ -19,6 +19,8 @@ import { Cashbook } from './pages/Cashbook';
 import { FeeCollectionPage } from './pages/FeeCollection';
 import { AccountantReports } from './pages/AccountantReports';
 import { DriverPerformance } from './pages/DriverPerformance';
+import { Settings } from './pages/Settings';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { useAuth } from './contexts/AuthContext';
 
 const Home = () => {
@@ -34,87 +36,94 @@ const Home = () => {
 
 export default function App() {
   return (
-    <AuthProvider>
-      <Router>
-        <Routes>
-          <Route path="/login" element={<Login />} />
-          
-          <Route path="/" element={
-            <ProtectedRoute>
-              <Layout />
-            </ProtectedRoute>
-          }>
-            <Route index element={<Home />} />
-            <Route path="cleanup" element={
-              <ProtectedRoute allowedRoles={['admin']}>
-                <Cleanup />
+    <ErrorBoundary>
+      <AuthProvider>
+        <Router>
+          <Routes>
+            <Route path="/login" element={<Login />} />
+            
+            <Route path="/" element={
+              <ProtectedRoute>
+                <Layout />
               </ProtectedRoute>
-            } />
-            <Route path="users" element={
-              <ProtectedRoute allowedRoles={['admin']}>
-                <UserManager />
-              </ProtectedRoute>
-            } />
-            <Route path="entry" element={
-              <ProtectedRoute allowedRoles={['admin', 'accountant']}>
-                <DailyEntry />
-              </ProtectedRoute>
-            } />
-            <Route path="expenses" element={
-              <ProtectedRoute allowedRoles={['admin', 'accountant']}>
-                <ExpenseEntry />
-              </ProtectedRoute>
-            } />
-            <Route path="accountant" element={
-              <ProtectedRoute allowedRoles={['admin', 'accountant']}>
-                <AccountantDashboard />
-              </ProtectedRoute>
-            } />
-            <Route path="cashbook" element={
-              <ProtectedRoute allowedRoles={['admin', 'accountant']}>
-                <Cashbook />
-              </ProtectedRoute>
-            } />
-            <Route path="fees" element={
-              <ProtectedRoute allowedRoles={['admin', 'accountant']}>
-                <FeeCollectionPage />
-              </ProtectedRoute>
-            } />
-            <Route path="monthly" element={
-              <ProtectedRoute allowedRoles={['admin', 'accountant']}>
-                <MonthlyView />
-              </ProtectedRoute>
-            } />
-            <Route path="reports" element={
-              <ProtectedRoute allowedRoles={['admin', 'accountant']}>
-                <AccountantReports />
-              </ProtectedRoute>
-            } />
-            <Route path="staff" element={
-              <ProtectedRoute allowedRoles={['admin', 'accountant']}>
-                <StaffManager />
-              </ProtectedRoute>
-            } />
-            <Route path="admin/drivers/:id" element={
-              <ProtectedRoute allowedRoles={['admin']}>
-                <DriverPerformance />
-              </ProtectedRoute>
-            } />
-            <Route path="salaries" element={
-              <ProtectedRoute allowedRoles={['admin', 'accountant']}>
-                <SalaryManager />
-              </ProtectedRoute>
-            } />
-            <Route path="buses" element={
-              <ProtectedRoute allowedRoles={['admin']}>
-                <BusManager />
-              </ProtectedRoute>
-            } />
-          </Route>
+            }>
+              <Route index element={<Home />} />
+              <Route path="cleanup" element={
+                <ProtectedRoute allowedRoles={['admin']}>
+                  <Cleanup />
+                </ProtectedRoute>
+              } />
+              <Route path="users" element={
+                <ProtectedRoute allowedRoles={['admin']}>
+                  <UserManager />
+                </ProtectedRoute>
+              } />
+              <Route path="entry" element={
+                <ProtectedRoute allowedRoles={['admin', 'accountant']}>
+                  <DailyEntry />
+                </ProtectedRoute>
+              } />
+              <Route path="expenses" element={
+                <ProtectedRoute allowedRoles={['admin', 'accountant']}>
+                  <ExpenseEntry />
+                </ProtectedRoute>
+              } />
+              <Route path="accountant" element={
+                <ProtectedRoute allowedRoles={['admin', 'accountant']}>
+                  <AccountantDashboard />
+                </ProtectedRoute>
+              } />
+              <Route path="cashbook" element={
+                <ProtectedRoute allowedRoles={['admin', 'accountant']}>
+                  <Cashbook />
+                </ProtectedRoute>
+              } />
+              <Route path="fees" element={
+                <ProtectedRoute allowedRoles={['admin', 'accountant']}>
+                  <FeeCollectionPage />
+                </ProtectedRoute>
+              } />
+              <Route path="monthly" element={
+                <ProtectedRoute allowedRoles={['admin', 'accountant']}>
+                  <MonthlyView />
+                </ProtectedRoute>
+              } />
+              <Route path="reports" element={
+                <ProtectedRoute allowedRoles={['admin', 'accountant']}>
+                  <AccountantReports />
+                </ProtectedRoute>
+              } />
+              <Route path="staff" element={
+                <ProtectedRoute allowedRoles={['admin', 'accountant']}>
+                  <StaffManager />
+                </ProtectedRoute>
+              } />
+              <Route path="admin/drivers/:id" element={
+                <ProtectedRoute allowedRoles={['admin']}>
+                  <DriverPerformance />
+                </ProtectedRoute>
+              } />
+              <Route path="salaries" element={
+                <ProtectedRoute allowedRoles={['admin', 'accountant']}>
+                  <SalaryManager />
+                </ProtectedRoute>
+              } />
+              <Route path="buses" element={
+                <ProtectedRoute allowedRoles={['admin']}>
+                  <BusManager />
+                </ProtectedRoute>
+              } />
+              <Route path="settings" element={
+                <ProtectedRoute allowedRoles={['admin']}>
+                  <Settings />
+                </ProtectedRoute>
+              } />
+            </Route>
 
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
-      </Router>
-    </AuthProvider>
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Routes>
+        </Router>
+      </AuthProvider>
+    </ErrorBoundary>
   );
 }

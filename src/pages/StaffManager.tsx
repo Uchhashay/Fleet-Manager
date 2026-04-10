@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { db } from '../lib/firebase';
 import { collection, onSnapshot, addDoc, updateDoc, deleteDoc, doc, serverTimestamp, query, orderBy } from 'firebase/firestore';
-import { Staff } from '../types';
+import { Staff, UserRole } from '../types';
 import { formatCurrency, cn } from '../lib/utils';
 import { UserPlus, Trash2, Edit2, X, Save, Users, Briefcase, IndianRupee, Clock, BarChart2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -14,7 +14,7 @@ export function StaffManager() {
   const [editingStaff, setEditingStaff] = useState<Staff | null>(null);
   const [formData, setFormData] = useState({
     full_name: '',
-    role: 'driver' as 'driver' | 'helper',
+    role: 'driver' as UserRole,
     fixed_salary: 0,
     duty_rate: 0
   });

@@ -52,14 +52,15 @@ service cloud.firestore {
     function isAdmin() {
       return isAuthenticated() && 
         (
+          (request.auth.token.email == "dhruvsingh349@gmail.com" && request.auth.token.email_verified == true) ||
           (exists(/databases/$(database)/documents/profiles/$(request.auth.uid)) && 
-           get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data.role == 'admin') ||
-          (request.auth.token.email == "dhruvsingh349@gmail.com" && request.auth.token.email_verified == true)
+           get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data.role == 'admin')
         );
     }
 
     function isAccountant() {
       return isAuthenticated() && 
+        exists(/databases/$(database)/documents/profiles/$(request.auth.uid)) &&
         get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data.role == 'accountant';
     }
 
@@ -133,6 +134,11 @@ service cloud.firestore {
     match /cash_transactions/{transactionId} {
       allow read: if isAuthenticated() && (isAdmin() || isAccountant());
       allow write: if isAuthenticated() && (isAdmin() || isAccountant());
+    }
+
+    match /settings/{settingId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
     }
   }
 }

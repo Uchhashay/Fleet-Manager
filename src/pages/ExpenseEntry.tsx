@@ -20,7 +20,10 @@ import { motion, AnimatePresence } from 'framer-motion';
 
 import { EXPENSE_CATEGORIES } from '../constants';
 
+import { useAuth } from '../contexts/AuthContext';
+
 export function ExpenseEntry() {
+  const { profile } = useAuth();
   const [step, setStep] = useState(1);
   const [buses, setBuses] = useState<Bus[]>([]);
   const [loading, setLoading] = useState(true);
@@ -38,6 +41,14 @@ export function ExpenseEntry() {
     receipt_ref: '',
     paid_by: 'accountant' as 'owner' | 'accountant'
   });
+
+  useEffect(() => {
+    if (profile?.role === 'admin') {
+      setFormData(prev => ({ ...prev, paid_by: 'owner' }));
+    } else {
+      setFormData(prev => ({ ...prev, paid_by: 'accountant' }));
+    }
+  }, [profile?.role]);
 
   const categories = type === 'bus' ? EXPENSE_CATEGORIES.BUS : EXPENSE_CATEGORIES.COMPANY;
   const selectedCategory = categories.find(c => c.value === formData.category);
@@ -75,8 +86,15 @@ export function ExpenseEntry() {
     setFormData(prev => ({ ...prev, [name]: val }));
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSubmit = async (e?: React.FormEvent) => {
+    e?.preventDefault();
+    
+    // Safeguard: only submit if we are on the final step
+    if (step < 3) {
+      nextStep();
+      return;
+    }
+
     setSaving(true);
     setMessage(null);
 
@@ -109,7 +127,15 @@ export function ExpenseEntry() {
 
       setMessage({ type: 'success', text: 'Expense saved successfully!' });
       setStep(1);
-      setFormData(prev => ({ ...prev, amount: 0, description: '', receipt_ref: '', category: '', subcategory: '', paid_by: 'accountant' }));
+      setFormData(prev => ({ 
+        ...prev, 
+        amount: 0, 
+        description: '', 
+        receipt_ref: '', 
+        category: '', 
+        subcategory: '', 
+        paid_by: profile?.role === 'admin' ? 'owner' : 'accountant' 
+      }));
       
       // Clear message after 3 seconds
       setTimeout(() => setMessage(null), 3000);
@@ -177,7 +203,7 @@ export function ExpenseEntry() {
         </AnimatePresence>
       </header>
 
-      <form onSubmit={handleSubmit} className="space-y-8">
+      <form onSubmit={(e) => e.preventDefault()} className="space-y-8">
         <AnimatePresence mode="wait">
           {step === 1 && (
             <motion.div 
@@ -242,7 +268,7 @@ export function ExpenseEntry() {
                     >
                       <option value="">Choose a vehicle</option>
                       {buses.map(bus => (
-                        <option key={bus.id} value={bus.id}>{bus.registration_number} — {bus.name}</option>
+                        <option key={bus.id} value={bus.id}>{bus.registration_number}</option>
                       ))}
                     </select>
                     <BusIcon className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-secondary pointer-events-none stroke-[1.5px]" />
@@ -416,6 +442,7 @@ export function ExpenseEntry() {
         {/* Navigation Buttons */}
         <div className="flex items-center justify-between pt-6 border-t border-border">
           <button
+            key="back-btn"
             type="button"
             onClick={prevStep}
             disabled={step === 1}
@@ -427,6 +454,7 @@ export function ExpenseEntry() {
           
           {step < 3 ? (
             <button
+              key="next-btn"
               type="button"
               onClick={nextStep}
               className="btn-primary flex items-center space-x-2 !px-8"
@@ -436,7 +464,9 @@ export function ExpenseEntry() {
             </button>
           ) : (
             <button
-              type="submit"
+              key="submit-btn"
+              type="button"
+              onClick={() => handleSubmit()}
               disabled={saving}
               className="btn-primary flex items-center space-x-2 !px-10"
             >

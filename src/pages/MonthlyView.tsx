@@ -20,9 +20,13 @@ export function MonthlyView() {
   const [staff, setStaff] = useState<Staff[]>([]);
   const [selectedBus, setSelectedBus] = useState<string>(searchParams.get('busId') || 'all');
   const [selectedDay, setSelectedDay] = useState<Date | null>(null);
-  const [currentMonth, setCurrentMonth] = useState(
-    searchParams.get('month') ? new Date(searchParams.get('month')!) : new Date()
-  );
+  const [currentMonth, setCurrentMonth] = useState(() => {
+    const monthParam = searchParams.get('month');
+    const startParam = searchParams.get('start');
+    if (monthParam) return new Date(monthParam);
+    if (startParam) return new Date(startParam);
+    return new Date();
+  });
   const [loading, setLoading] = useState(true);
   const [busesLoading, setBusesLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -35,7 +39,7 @@ export function MonthlyView() {
 
   // Bulk Edit State
   const [isEditMode, setIsEditMode] = useState(false);
-  const [localChanges, setLocalChanges] = useState<Record<string, DailyRecord>>({});
+  const [localChanges, setLocalChanges] = useState<Record<string, DailyRecord | Partial<DailyRecord>>>({});
   const [saving, setSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
 

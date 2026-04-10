@@ -19,7 +19,10 @@ import { FeeCollection } from '../types';
 import { handleFirestoreError, OperationType } from '../lib/firebase-utils';
 import { motion, AnimatePresence } from 'framer-motion';
 
+import { useAuth } from '../contexts/AuthContext';
+
 export function FeeCollectionPage() {
+  const { profile } = useAuth();
   const [collections, setCollections] = useState<FeeCollection[]>([]);
   const [loading, setLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -35,6 +38,15 @@ export function FeeCollectionPage() {
     notes: '',
     paid_by: 'accountant' as 'owner' | 'accountant'
   });
+
+  useEffect(() => {
+    if (profile?.role === 'admin') {
+      setFormData(prev => ({ ...prev, paid_by: 'owner' }));
+    } else {
+      setFormData(prev => ({ ...prev, paid_by: 'accountant' }));
+    }
+  }, [profile?.role]);
+
   const [filters, setFilters] = useState({
     month: format(new Date(), 'yyyy-MM'),
     school: 'all',
@@ -122,7 +134,7 @@ export function FeeCollectionPage() {
         payment_mode: 'Cash',
         fee_type: 'Regular Fee',
         notes: '',
-        paid_by: 'accountant'
+        paid_by: profile?.role === 'admin' ? 'owner' : 'accountant'
       });
     } catch (error: any) {
       console.error('Error saving fee collection:', error);
