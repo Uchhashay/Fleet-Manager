@@ -4,6 +4,7 @@ import { collection, getDocs, addDoc, serverTimestamp, query, orderBy, onSnapsho
 import { Bus, Staff, DailyRecord, School } from '../types';
 import { formatCurrency, cn } from '../lib/utils';
 import { handleFirestoreError, OperationType } from '../lib/firebase-utils';
+import { logActivity } from '../lib/activity-logger';
 import { Save, Plus, AlertCircle, CheckCircle2, Bus as BusIcon, Calendar, ChevronRight, ChevronLeft, ClipboardList } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
@@ -163,6 +164,19 @@ export function DailyEntry() {
       }
 
       setMessage({ type: 'success', text: 'Record saved successfully!' });
+      
+      // Log activity
+      if (profile) {
+        const busNum = buses.find(b => b.id === formData.bus_id)?.registration_number || 'Unknown Bus';
+        await logActivity(
+          profile.full_name,
+          profile.role,
+          'Created',
+          'Daily Entry',
+          `Created entry for ${busNum} on ${formData.date}`
+        );
+      }
+
       setStep(1);
       // Reset form partially
       setFormData(prev => ({

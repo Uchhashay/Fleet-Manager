@@ -59,6 +59,17 @@ export interface School {
   created_at: any;
 }
 
+export interface ActivityLog {
+  id: string;
+  user_id: string;
+  user_name: string;
+  user_role: UserRole;
+  action_type: 'Created' | 'Edited' | 'Deleted';
+  module: string;
+  details: string;
+  timestamp: any;
+}
+
 export interface BusExpense {
   id: string;
   bus_id: string;

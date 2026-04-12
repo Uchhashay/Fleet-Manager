@@ -1,13 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { db } from '../lib/firebase';
-import { collection, getDocs, query, where, orderBy, onSnapshot } from 'firebase/firestore';
+import { collection, getDocs, query, where, orderBy, onSnapshot, deleteDoc, doc, writeBatch } from 'firebase/firestore';
 import { DailyRecord, Bus, Staff, School } from '../types';
 import { formatCurrency, cn } from '../lib/utils';
 import { handleFirestoreError, OperationType } from '../lib/firebase-utils';
-import { Download, ChevronLeft, ChevronRight, Calendar as CalendarIcon, Table as TableIcon, Bus as BusIcon, Filter, LayoutGrid, AlertCircle, X, User, Fuel, Receipt, Info, Edit2, Save, RotateCcw, Check } from 'lucide-react';
+import { logActivity } from '../lib/activity-logger';
+import { Download, ChevronLeft, ChevronRight, Calendar as CalendarIcon, Table as TableIcon, Bus as BusIcon, Filter, LayoutGrid, AlertCircle, X, User, Fuel, Receipt, Info, Edit2, Save, RotateCcw, Check, Trash2 } from 'lucide-react';
 import { format, startOfMonth, endOfMonth, eachDayOfInterval, isSameDay, startOfWeek, endOfWeek, parseISO } from 'date-fns';
 import { motion, AnimatePresence } from 'framer-motion';
-import { writeBatch, doc } from 'firebase/firestore';
 import { useAuth } from '../contexts/AuthContext';
 
 import { useSearchParams } from 'react-router-dom';
@@ -219,6 +219,19 @@ export function MonthlyView() {
       });
 
       await batch.commit();
+
+      // Log activity
+      if (profile) {
+        const count = Object.keys(localChanges).length;
+        await logActivity(
+          profile.full_name,
+          profile.role,
+          'Edited',
+          'Monthly View',
+          `Bulk updated ${count} daily records for ${format(currentMonth, 'MMMM yyyy')}`
+        );
+      }
+
       setSaveSuccess(true);
       setTimeout(() => setSaveSuccess(false), 3000);
       await fetchRecords();
@@ -256,6 +269,33 @@ export function MonthlyView() {
       ...prev,
       [key]: updatedRecord
     }));
+  };
+
+  const handleDeleteRecord = async (recordId: string) => {
+    if (!confirm('Are you sure you want to delete this record? This action cannot be undone.')) return;
+    
+    const recordToDelete = records.find(r => r.id === recordId);
+    try {
+      await deleteDoc(doc(db, 'daily_records', recordId));
+      
+      // Log activity
+      if (profile && recordToDelete) {
+        const busNum = buses.find(b => b.id === recordToDelete.bus_id)?.registration_number || 'Unknown Bus';
+        await logActivity(
+          profile.full_name,
+          profile.role,
+          'Deleted',
+          'Monthly View',
+          `Deleted daily record for ${busNum} on ${recordToDelete.date}`
+        );
+      }
+      
+      await fetchRecords();
+      setSelectedDay(null);
+    } catch (err) {
+      console.error('Error deleting record:', err);
+      setError('Failed to delete record. Please try again.');
+    }
   };
 
   const totals = records.reduce((acc, curr) => {
@@ -1036,9 +1076,20 @@ export function MonthlyView() {
                                 </div>
                                 <span className="text-sm font-bold text-primary">{bus?.registration_number || 'Unknown Bus'}</span>
                               </div>
-                              {record.is_holiday && (
-                                <span className="px-2 py-1 rounded-md bg-warning/10 text-warning text-[8px] font-bold uppercase tracking-widest">Holiday</span>
-                              )}
+                              <div className="flex items-center space-x-2">
+                                {record.is_holiday && (
+                                  <span className="px-2 py-1 rounded-md bg-warning/10 text-warning text-[8px] font-bold uppercase tracking-widest">Holiday</span>
+                                )}
+                                {profile?.role === 'admin' && (
+                                  <button
+                                    onClick={() => handleDeleteRecord(record.id)}
+                                    className="p-2 text-secondary hover:text-danger hover:bg-danger/10 rounded-lg transition-all"
+                                    title="Delete Record"
+                                  >
+                                    <Trash2 className="h-4 w-4" />
+                                  </button>
+                                )}
+                              </div>
                             </div>
 
                             <div className="grid grid-cols-2 gap-4">

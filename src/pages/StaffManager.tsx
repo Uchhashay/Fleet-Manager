@@ -5,9 +5,11 @@ import { Staff, UserRole } from '../types';
 import { formatCurrency, cn } from '../lib/utils';
 import { UserPlus, Trash2, Edit2, X, Save, Users, Briefcase, IndianRupee, Clock, BarChart2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Link } from 'react-router-dom';
+import { useAuth } from '../contexts/AuthContext';
+import { logActivity } from '../lib/activity-logger';
 
 export function StaffManager() {
+  const { profile } = useAuth();
   const [staff, setStaff] = useState<Staff[]>([]);
   const [loading, setLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -62,11 +64,29 @@ export function StaffManager() {
     try {
       if (editingStaff) {
         await updateDoc(doc(db, 'staff', editingStaff.id), formData);
+        if (profile) {
+          await logActivity(
+            profile.full_name,
+            profile.role,
+            'Edited',
+            'Staff Management',
+            `Updated details for staff member: ${formData.full_name}`
+          );
+        }
       } else {
         await addDoc(collection(db, 'staff'), {
           ...formData,
           created_at: serverTimestamp()
         });
+        if (profile) {
+          await logActivity(
+            profile.full_name,
+            profile.role,
+            'Created',
+            'Staff Management',
+            `Added new staff member: ${formData.full_name} (${formData.role})`
+          );
+        }
       }
       setIsModalOpen(false);
     } catch (error) {
@@ -76,8 +96,18 @@ export function StaffManager() {
 
   const handleDelete = async (id: string) => {
     if (!confirm('Are you sure you want to delete this staff member?')) return;
+    const staffToDelete = staff.find(s => s.id === id);
     try {
       await deleteDoc(doc(db, 'staff', id));
+      if (profile && staffToDelete) {
+        await logActivity(
+          profile.full_name,
+          profile.role,
+          'Deleted',
+          'Staff Management',
+          `Deleted staff member: ${staffToDelete.full_name}`
+        );
+      }
     } catch (error) {
       console.error('Error deleting staff:', error);
     }

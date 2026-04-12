@@ -17,6 +17,7 @@ import {
 import { formatCurrency, cn } from '../lib/utils';
 import { FeeCollection } from '../types';
 import { handleFirestoreError, OperationType } from '../lib/firebase-utils';
+import { logActivity } from '../lib/activity-logger';
 import { motion, AnimatePresence } from 'framer-motion';
 
 import { useAuth } from '../contexts/AuthContext';
@@ -104,6 +105,17 @@ export function FeeCollectionPage() {
       };
 
       const docRef = await addDoc(collection(db, 'fee_collections'), txData);
+
+      // Log activity
+      if (profile) {
+        await logActivity(
+          profile.full_name,
+          profile.role,
+          'Created',
+          'Fee Collection',
+          `Collected ${formatCurrency(formData.amount)} from ${formData.student_name} (${formData.school_name})`
+        );
+      }
 
       if (formData.payment_mode === 'Cash') {
         try {

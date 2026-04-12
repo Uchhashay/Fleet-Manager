@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { db, auth } from '../lib/firebase';
-import { collection, query, where, getDocs, Timestamp, addDoc, serverTimestamp, orderBy, doc, getDoc } from 'firebase/firestore';
+import { collection, query, where, getDocs, Timestamp, addDoc, serverTimestamp, orderBy, doc, getDoc, deleteDoc } from 'firebase/firestore';
 import { format, startOfMonth, endOfMonth } from 'date-fns';
 import { 
   Download, 
@@ -15,12 +15,14 @@ import {
   GraduationCap,
   X,
   PlusCircle,
-  User
+  User,
+  Trash2
 } from 'lucide-react';
 import { formatCurrency, cn } from '../lib/utils';
 import { DailyRecord, BusExpense, CompanyExpense, CashTransaction, Staff } from '../types';
 import { motion, AnimatePresence } from 'framer-motion';
 import { handleFirestoreError, OperationType } from '../lib/firebase-utils';
+import { logActivity } from '../lib/activity-logger';
 
 import { useAuth } from '../contexts/AuthContext';
 import { useLocation } from 'react-router-dom';
@@ -354,6 +356,17 @@ export function Cashbook() {
 
       await addDoc(collection(db, 'cash_transactions'), transactionData);
 
+      // Log activity
+      if (profile) {
+        await logActivity(
+          profile.full_name,
+          profile.role,
+          'Created',
+          'Cashbook',
+          `Created manual ${formData.type === 'in' ? 'inflow' : 'outflow'} of ${formatCurrency(amount)}: ${formData.description}`
+        );
+      }
+
       setActiveForm(null);
       setFormData({
         type: 'in',
@@ -401,6 +414,48 @@ export function Cashbook() {
   }, { inflow: 0, outflow: 0 });
 
   const netBalance = totals.inflow - totals.outflow;
+
+  async function handleDeleteEntry(entry: LedgerEntry) {
+    if (!confirm(`Are you sure you want to delete this ${entry.source} entry?`)) return;
+    
+    try {
+      let collectionName = '';
+      let docId = entry.id;
+
+      if (entry.source === 'Manual Entry') {
+        collectionName = 'cash_transactions';
+      } else if (entry.source === 'Daily Entry') {
+        collectionName = 'daily_records';
+        docId = entry.id.split('-')[0]; // Remove -in or -out
+      } else if (entry.source === 'Bus Expense') {
+        collectionName = 'bus_expenses';
+      } else if (entry.source === 'Company Expense') {
+        collectionName = 'company_expenses';
+      } else if (entry.source === 'Fee Collection') {
+        collectionName = 'fee_collections';
+      }
+
+      if (collectionName) {
+        await deleteDoc(doc(db, collectionName, docId));
+        
+        // Log activity
+        if (profile) {
+          await logActivity(
+            profile.full_name,
+            profile.role,
+            'Deleted',
+            'Cashbook',
+            `Deleted ${entry.source} entry: ${entry.description} (${formatCurrency(entry.amount)})`
+          );
+        }
+        
+        setMessage({ type: 'success', text: 'Entry deleted successfully' });
+        fetchLedger();
+      }
+    } catch (error) {
+      handleFirestoreError(error, OperationType.DELETE, 'ledger');
+    }
+  }
 
   return (
     <div className="space-y-10">
@@ -838,6 +893,7 @@ export function Cashbook() {
                 <th>Description</th>
                 <th className="text-right">Amount</th>
                 <th className="text-right">Cash in Hand</th>
+                {profile?.role === 'admin' && <th className="text-right">Actions</th>}
               </tr>
             </thead>
             <tbody>
@@ -903,6 +959,20 @@ export function Cashbook() {
                       <td className="text-right font-bold font-mono text-primary">
                         {formatCurrency(entry.running_balance || 0)}
                       </td>
+                      {profile?.role === 'admin' && (
+                        <td className="text-right">
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleDeleteEntry(entry);
+                            }}
+                            className="p-2 text-secondary hover:text-danger hover:bg-danger/10 rounded-lg transition-all"
+                            title="Delete Entry"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        </td>
+                      )}
                     </motion.tr>
                   ))}
                   

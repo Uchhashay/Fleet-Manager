@@ -4,6 +4,7 @@ import { collection, getDocs, addDoc, serverTimestamp, query, orderBy } from 'fi
 import { Bus } from '../types';
 import { cn } from '../lib/utils';
 import { handleFirestoreError, OperationType } from '../lib/firebase-utils';
+import { logActivity } from '../lib/activity-logger';
 import { 
   Save, 
   AlertCircle, 
@@ -126,6 +127,19 @@ export function ExpenseEntry() {
       }
 
       setMessage({ type: 'success', text: 'Expense saved successfully!' });
+
+      // Log activity
+      if (profile) {
+        const busNum = type === 'bus' ? buses.find(b => b.id === formData.bus_id)?.registration_number : 'Company';
+        await logActivity(
+          profile.full_name,
+          profile.role,
+          'Created',
+          'Expense Entry',
+          `Created ${type} expense for ${busNum}: ${formData.category} - ${formData.amount}`
+        );
+      }
+
       setStep(1);
       setFormData(prev => ({ 
         ...prev, 

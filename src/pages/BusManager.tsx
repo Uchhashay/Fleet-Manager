@@ -4,9 +4,11 @@ import { collection, onSnapshot, addDoc, updateDoc, deleteDoc, doc, serverTimest
 import { Bus } from '../types';
 import { Plus, Bus as BusIcon, Trash2, Edit2, X, Save, Info, Users } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { cn } from '../lib/utils';
+import { useAuth } from '../contexts/AuthContext';
+import { logActivity } from '../lib/activity-logger';
 
 export function BusManager() {
+  const { profile } = useAuth();
   const [buses, setBuses] = useState<Bus[]>([]);
   const [loading, setLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -58,11 +60,29 @@ export function BusManager() {
     try {
       if (editingBus) {
         await updateDoc(doc(db, 'buses', editingBus.id), formData);
+        if (profile) {
+          await logActivity(
+            profile.full_name,
+            profile.role,
+            'Edited',
+            'Fleet Management',
+            `Updated details for bus: ${formData.registration_number}`
+          );
+        }
       } else {
         await addDoc(collection(db, 'buses'), {
           ...formData,
           created_at: serverTimestamp()
         });
+        if (profile) {
+          await logActivity(
+            profile.full_name,
+            profile.role,
+            'Created',
+            'Fleet Management',
+            `Added new vehicle: ${formData.registration_number} (${formData.model})`
+          );
+        }
       }
       setIsModalOpen(false);
     } catch (error) {
@@ -72,8 +92,18 @@ export function BusManager() {
 
   const handleDelete = async (id: string) => {
     if (!confirm('Are you sure you want to delete this bus?')) return;
+    const busToDelete = buses.find(b => b.id === id);
     try {
       await deleteDoc(doc(db, 'buses', id));
+      if (profile && busToDelete) {
+        await logActivity(
+          profile.full_name,
+          profile.role,
+          'Deleted',
+          'Fleet Management',
+          `Deleted vehicle: ${busToDelete.registration_number}`
+        );
+      }
     } catch (error) {
       console.error('Error deleting bus:', error);
     }

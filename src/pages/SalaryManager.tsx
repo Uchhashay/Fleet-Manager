@@ -1,13 +1,17 @@
 import React, { useState, useEffect } from 'react';
 import { db, auth } from '../lib/firebase';
-import { collection, getDocs, query, where, orderBy, setDoc, doc, serverTimestamp, addDoc } from 'firebase/firestore';
+import { collection, getDocs, query, where, orderBy, setDoc, doc, serverTimestamp, addDoc, deleteDoc } from 'firebase/firestore';
 import { Staff, SalaryRecord, CashTransaction } from '../types';
 import { formatCurrency, cn } from '../lib/utils';
-import { Save, CheckCircle2, AlertCircle, ChevronLeft, ChevronRight, Calculator, Calendar, User, Briefcase, Clock, Wallet, X, IndianRupee, History, ArrowDownRight, ArrowUpRight, MessageSquare } from 'lucide-react';
+import { Save, CheckCircle2, AlertCircle, ChevronLeft, ChevronRight, Calculator, Calendar, User, Briefcase, Clock, Wallet, X, IndianRupee, History, ArrowDownRight, ArrowUpRight, MessageSquare, Trash2 } from 'lucide-react';
 import { format, startOfMonth, endOfMonth, subMonths } from 'date-fns';
 import { motion, AnimatePresence } from 'framer-motion';
+import { useAuth } from '../contexts/AuthContext';
+import { logActivity } from '../lib/activity-logger';
+import { handleFirestoreError, OperationType } from '../lib/firebase-utils';
 
 export function SalaryManager() {
+  const { profile } = useAuth();
   const [staff, setStaff] = useState<Staff[]>([]);
   const [loading, setLoading] = useState(true);
   const [currentMonth, setCurrentMonth] = useState(new Date());
@@ -220,6 +224,18 @@ export function SalaryManager() {
         created_at: serverTimestamp()
       });
 
+      // Log activity
+      if (profile) {
+        const staffMember = staff.find(s => s.id === staffId);
+        await logActivity(
+          profile.full_name,
+          profile.role,
+          'Edited',
+          'Salary Management',
+          `Updated salary record for ${staffMember?.full_name} for ${salary.month}`
+        );
+      }
+
       setMessage({ type: 'success', text: 'Salary record saved!' });
       setTimeout(() => setMessage(null), 3000);
     } catch (error: any) {
@@ -257,6 +273,17 @@ export function SalaryManager() {
         created_at: serverTimestamp()
       });
 
+      // Log activity
+      if (profile) {
+        await logActivity(
+          profile.full_name,
+          profile.role,
+          'Created',
+          'Salary Management',
+          `Recorded ${paymentData.type.replace('_', ' ')} of ${formatCurrency(paymentData.amount)} for ${staffMember?.full_name}`
+        );
+      }
+
       setIsPaymentModalOpen(false);
       setPaymentData({ staffId: '', amount: 0, type: 'salary', paidBy: 'accountant' });
       fetchData(); // Refresh to update totals
@@ -279,6 +306,30 @@ export function SalaryManager() {
     totals.totalPaid += paid;
     totals.pendingBalance += pending > 0 ? pending : 0;
   });
+
+  async function handleDeletePayment(transaction: any, staffName: string) {
+    if (!confirm(`Are you sure you want to delete this payment of ${formatCurrency(transaction.amount)}?`)) return;
+    
+    try {
+      await deleteDoc(doc(db, 'cash_transactions', transaction.id));
+      
+      // Log activity
+      if (profile) {
+        await logActivity(
+          profile.full_name,
+          profile.role,
+          'Deleted',
+          'Salary Management',
+          `Deleted ${transaction.type} payment of ${formatCurrency(transaction.amount)} for ${staffName}`
+        );
+      }
+      
+      setMessage({ type: 'success', text: 'Payment deleted successfully' });
+      fetchData();
+    } catch (error) {
+      handleFirestoreError(error, OperationType.DELETE, 'cash_transactions');
+    }
+  }
 
   if (loading) return (
     <div className="flex items-center justify-center min-h-[400px]">
@@ -581,6 +632,7 @@ export function SalaryManager() {
                                 <th className="px-4 py-3 text-[9px] font-bold text-secondary uppercase tracking-widest">Paid By</th>
                                 <th className="px-4 py-3 text-[9px] font-bold text-secondary uppercase tracking-widest">Description</th>
                                 <th className="px-4 py-3 text-[9px] font-bold text-secondary uppercase tracking-widest text-right">Amount</th>
+                                {profile?.role === 'admin' && <th className="px-4 py-3 text-[9px] font-bold text-secondary uppercase tracking-widest text-right">Actions</th>}
                               </tr>
                             </thead>
                             <tbody className="divide-y divide-border">
@@ -594,6 +646,7 @@ export function SalaryManager() {
                                   isPayment: false
                                 })),
                                 ...(staffTransactions[s.id] || []).map(t => ({
+                                  id: t.id,
                                   date: t.date,
                                   type: t.category === 'salary_advance' ? 'Advance' : 
                                         t.category === 'duty_payment' ? 'Duty Pay' : 'Salary',
@@ -648,6 +701,19 @@ export function SalaryManager() {
                                   )}>
                                     {item.isPayment ? '-' : ''}{formatCurrency(item.amount)}
                                   </td>
+                                  {profile?.role === 'admin' && (
+                                    <td className="px-4 py-3 text-right">
+                                      {item.isPayment && !(item as any).isOpening && (
+                                        <button
+                                          onClick={() => handleDeletePayment(item, s.full_name)}
+                                          className="p-1.5 text-secondary hover:text-danger hover:bg-danger/10 rounded-lg transition-all"
+                                          title="Delete Payment"
+                                        >
+                                          <Trash2 className="h-3.5 w-3.5" />
+                                        </button>
+                                      )}
+                                    </td>
+                                  )}
                                 </tr>
                               ))}
                               {(!staffDuties[s.id]?.length && !staffTransactions[s.id]?.length) && (

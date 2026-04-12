@@ -126,8 +126,10 @@ export function Layout() {
     !item.roles || (profile && item.roles.includes(profile.role))
   );
 
-  // For mobile bottom nav, we only show the first 4-5 items and a "More" or just the most important ones
-  const mobileNavItems = filteredNavItems.slice(0, 4);
+  // For mobile bottom nav, we only show the most important items
+  const mobileNavItems = profile?.role === 'accountant' 
+    ? filteredNavItems.filter(item => ['/', '/entry', '/cashbook', '/monthly', '/reports'].includes(item.path))
+    : filteredNavItems.slice(0, 5);
 
   return (
     <div className="flex min-h-screen flex-col bg-background text-primary transition-colors duration-300 md:flex-row">
