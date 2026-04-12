@@ -191,6 +191,131 @@
         "updated_by": { "type": "string", "description": "UID of the user who last updated the profile." }
       },
       "required": ["name"]
+    },
+    "Student": {
+      "title": "Student",
+      "description": "Student record for fee management.",
+      "type": "object",
+      "properties": {
+        "studentName": { "type": "string" },
+        "fatherName": { "type": "string" },
+        "phoneNumber": { "type": "string" },
+        "schoolName": { "type": "string" },
+        "standName": { "type": "string" },
+        "class": { "type": "string" },
+        "address": { "type": "string" },
+        "dateOfJoining": { "type": "string", "format": "date-time" },
+        "feeAmount": { "type": "number" },
+        "concession": { "type": "number" },
+        "oldBalance": { "type": "number" },
+        "totalBalance": { "type": "number" },
+        "isActive": { "type": "boolean" },
+        "session": { "type": "string" },
+        "notes": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["studentName", "fatherName", "phoneNumber", "schoolName", "standName", "class", "feeAmount"]
+    },
+    "StudentComment": {
+      "title": "Student Comment",
+      "type": "object",
+      "properties": {
+        "text": { "type": "string" },
+        "createdBy": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["text", "createdBy"]
+    },
+    "StudentTimelineEvent": {
+      "title": "Student Timeline Event",
+      "type": "object",
+      "properties": {
+        "event": { "type": "string" },
+        "description": { "type": "string" },
+        "createdBy": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["event", "createdBy"]
+    },
+    "StudentTransaction": {
+      "title": "Student Transaction",
+      "type": "object",
+      "properties": {
+        "invoiceNo": { "type": "string" },
+        "month": { "type": "string" },
+        "amount": { "type": "number" },
+        "status": { "type": "string", "enum": ["paid", "unpaid", "partial"] },
+        "type": { "type": "string", "enum": ["invoice", "receipt", "skip"] },
+        "reason": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "createdBy": { "type": "string" }
+      },
+      "required": ["month", "amount", "status", "type", "createdBy"]
+    },
+    "Invoice": {
+      "title": "Invoice",
+      "description": "Student fee invoice.",
+      "type": "object",
+      "properties": {
+        "invoiceNumber": { "type": "string" },
+        "studentId": { "type": "string" },
+        "studentName": { "type": "string" },
+        "fatherName": { "type": "string" },
+        "schoolName": { "type": "string" },
+        "standName": { "type": "string" },
+        "address": { "type": "string" },
+        "phoneNumber": { "type": "string" },
+        "invoiceDate": { "type": "string", "format": "date-time" },
+        "dueDate": { "type": "string", "format": "date-time" },
+        "month": { "type": "string" },
+        "feeAmount": { "type": "number" },
+        "concession": { "type": "number" },
+        "totalAmount": { "type": "number" },
+        "paidAmount": { "type": "number" },
+        "balanceDue": { "type": "number" },
+        "status": { "type": "string", "enum": ["DRAFT", "SENT", "UNPAID", "PARTIAL", "PAID", "OVERDUE"] },
+        "createdBy": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["invoiceNumber", "studentId", "month", "totalAmount", "status"]
+    },
+    "Receipt": {
+      "title": "Receipt",
+      "description": "Payment receipt for an invoice.",
+      "type": "object",
+      "properties": {
+        "receiptNumber": { "type": "string" },
+        "invoiceId": { "type": "string" },
+        "invoiceNumber": { "type": "string" },
+        "studentId": { "type": "string" },
+        "studentName": { "type": "string" },
+        "fatherName": { "type": "string" },
+        "address": { "type": "string" },
+        "phoneNumber": { "type": "string" },
+        "paymentDate": { "type": "string", "format": "date-time" },
+        "paymentMode": { "type": "string", "enum": ["Cash", "UPI", "Bank Transfer"] },
+        "feeType": { "type": "string", "enum": ["Sunday Doorstep", "Regular via Driver"] },
+        "receivedBy": { "type": "string" },
+        "amountReceived": { "type": "number" },
+        "amountInWords": { "type": "string" },
+        "notes": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["receiptNumber", "invoiceId", "studentId", "amountReceived", "paymentMode"]
+    },
+    "SkippedMonth": {
+      "title": "Skipped Month",
+      "description": "Records when a student skips a month of fees.",
+      "type": "object",
+      "properties": {
+        "month": { "type": "string" },
+        "reason": { "type": "string" },
+        "skippedBy": { "type": "string" },
+        "skippedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["month", "skippedBy"]
     }
   },
   "firestore": {
@@ -237,6 +362,34 @@
     "/settings/organization": {
       "schema": "Organization",
       "description": "Organization profile settings."
+    },
+    "/students/{studentId}": {
+      "schema": "Student",
+      "description": "Student records."
+    },
+    "/students/{studentId}/comments/{commentId}": {
+      "schema": "StudentComment",
+      "description": "Internal comments for a student."
+    },
+    "/students/{studentId}/timeline/{eventId}": {
+      "schema": "StudentTimelineEvent",
+      "description": "Activity timeline for a student."
+    },
+    "/students/{studentId}/transactions/{transactionId}": {
+      "schema": "StudentTransaction",
+      "description": "Invoices and receipts for a student."
+    },
+    "/invoices/{invoiceId}": {
+      "schema": "Invoice",
+      "description": "Fee invoices."
+    },
+    "/receipts/{receiptId}": {
+      "schema": "Receipt",
+      "description": "Payment receipts."
+    },
+    "/students/{studentId}/skippedMonths/{skipId}": {
+      "schema": "SkippedMonth",
+      "description": "Months skipped by a student."
     }
   }
 }

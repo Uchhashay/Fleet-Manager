@@ -17,7 +17,11 @@ import {
   Sun,
   MoreHorizontal,
   Trash2,
-  UserCircle
+  UserCircle,
+  ChevronDown,
+  Database,
+  FileText,
+  LineChart
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { cn } from '../lib/utils';
@@ -26,6 +30,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 export function Layout() {
   const { profile, signOut } = useAuth();
   const location = useLocation();
+  const [expandedItems, setExpandedItems] = useState<string[]>([]);
   const [isDarkMode, setIsDarkMode] = useState(() => {
     const saved = localStorage.getItem('theme');
     return saved ? saved === 'dark' : true;
@@ -40,6 +45,25 @@ export function Layout() {
       localStorage.setItem('theme', 'light');
     }
   }, [isDarkMode]);
+
+  useEffect(() => {
+    // Auto-expand parent if child is active
+    navItems.forEach(item => {
+      if (item.children?.some(child => location.pathname === child.path)) {
+        if (!expandedItems.includes(item.label)) {
+          setExpandedItems(prev => [...prev, item.label]);
+        }
+      }
+    });
+  }, [location.pathname]);
+
+  const toggleExpand = (label: string) => {
+    setExpandedItems(prev => 
+      prev.includes(label) 
+        ? prev.filter(i => i !== label) 
+        : [...prev, label]
+    );
+  };
 
   const navItems = [
     { 
@@ -68,9 +92,14 @@ export function Layout() {
     },
     { 
       label: 'Fees', 
-      path: '/fees', 
       icon: GraduationCap, 
-      roles: ['admin', 'accountant'] 
+      roles: ['admin', 'accountant'],
+      children: [
+        { label: 'Fee Collection', path: '/fees/collection', icon: GraduationCap },
+        { label: 'Student Database', path: '/fees/students', icon: Database },
+        { label: 'Invoice & Receipt', path: '/fees/invoices', icon: FileText },
+        { label: 'Tracking & Analysis', path: '/fees/analysis', icon: LineChart },
+      ]
     },
     { 
       label: 'Monthly', 
@@ -128,7 +157,7 @@ export function Layout() {
 
   // For mobile bottom nav, we only show the most important items
   const mobileNavItems = profile?.role === 'accountant' 
-    ? filteredNavItems.filter(item => ['/', '/entry', '/cashbook', '/monthly', '/reports'].includes(item.path))
+    ? filteredNavItems.filter(item => ['Dashboard', 'Entry', 'Cash Book', 'Fees', 'Monthly', 'Reports'].includes(item.label))
     : filteredNavItems.slice(0, 5);
 
   return (
@@ -143,6 +172,69 @@ export function Layout() {
         
         <nav className="flex-1 space-y-1 px-4 py-4 overflow-y-auto">
           {filteredNavItems.map((item) => {
+            if (item.children) {
+              const isExpanded = expandedItems.includes(item.label);
+              const isChildActive = item.children.some(child => location.pathname === child.path);
+              
+              return (
+                <div key={item.label} className="space-y-1">
+                  <button
+                    onClick={() => toggleExpand(item.label)}
+                    className={cn(
+                      "w-full group flex items-center justify-between rounded-lg px-4 py-2.5 text-sm font-medium transition-all duration-200",
+                      isChildActive
+                        ? "bg-accent/5 text-accent"
+                        : "text-secondary hover:bg-border/50 hover:text-primary"
+                    )}
+                  >
+                    <div className="flex items-center space-x-3">
+                      <item.icon className={cn("h-5 w-5 stroke-[1.5px]", isChildActive ? "text-accent" : "text-secondary group-hover:text-primary")} />
+                      <span>{item.label}</span>
+                    </div>
+                    <motion.div
+                      animate={{ rotate: isExpanded ? 180 : 0 }}
+                      transition={{ duration: 0.2 }}
+                    >
+                      <ChevronDown className="h-4 w-4 stroke-[1.5px]" />
+                    </motion.div>
+                  </button>
+                  
+                  <AnimatePresence initial={false}>
+                    {isExpanded && (
+                      <motion.div
+                        initial={{ height: 0, opacity: 0 }}
+                        animate={{ height: "auto", opacity: 1 }}
+                        exit={{ height: 0, opacity: 0 }}
+                        transition={{ duration: 0.2, ease: "easeInOut" }}
+                        className="overflow-hidden"
+                      >
+                        <div className="ml-4 pl-4 border-l border-border/50 space-y-1 py-1">
+                          {item.children.map((child) => {
+                            const isChildActive = location.pathname === child.path;
+                            return (
+                              <Link
+                                key={child.path}
+                                to={child.path}
+                                className={cn(
+                                  "group flex items-center space-x-3 rounded-lg px-4 py-2 text-xs font-medium transition-all duration-200",
+                                  isChildActive
+                                    ? "bg-accent text-white shadow-sm"
+                                    : "text-secondary hover:bg-border/30 hover:text-primary"
+                                )}
+                              >
+                                <child.icon className={cn("h-4 w-4 stroke-[1.5px]", isChildActive ? "text-white" : "text-secondary group-hover:text-primary")} />
+                                <span>{child.label}</span>
+                              </Link>
+                            );
+                          })}
+                        </div>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </div>
+              );
+            }
+
             const isActive = location.pathname === item.path;
             return (
               <Link
@@ -211,11 +303,13 @@ export function Layout() {
       {/* Mobile Bottom Nav */}
       <nav className="fixed bottom-0 left-0 z-50 flex h-16 w-full items-center justify-around border-t border-border bg-surface px-2 md:hidden">
         {mobileNavItems.map((item) => {
-          const isActive = location.pathname === item.path;
+          const itemPath = item.path || item.children?.[0]?.path;
+          const isActive = location.pathname === itemPath || item.children?.some(child => location.pathname === child.path);
+          
           return (
             <Link
-              key={item.path}
-              to={item.path}
+              key={item.label}
+              to={itemPath || '#'}
               className={cn(
                 "flex flex-col items-center justify-center transition-all duration-300",
                 isActive ? "text-accent" : "text-secondary"

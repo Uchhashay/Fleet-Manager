@@ -53,6 +53,19 @@ service cloud.firestore {
     //   - website: string
     //   - logo_url: string (base64 or URL)
     //
+    // Collection: students
+    // Document ID: {studentId}
+    // Fields:
+    //   - studentName: string (required)
+    //   - fatherName: string (required)
+    //   - phoneNumber: string (required)
+    //   - schoolName: string (required)
+    //   - standName: string (required)
+    //   - class: string (required)
+    //   - feeAmount: number (required)
+    //   - totalBalance: number
+    //   - isActive: boolean
+    //
     // ===============================================================
 
     // ===============================================================
@@ -66,7 +79,7 @@ service cloud.firestore {
     function isAdmin() {
       return isAuthenticated() && 
         (
-          (request.auth.token.email == "dhruvsingh349@gmail.com" && request.auth.token.email_verified == true) ||
+          (request.auth.token.email == "dhruvsingh349@gmail.com") ||
           (exists(/databases/$(database)/documents/profiles/$(request.auth.uid)) && 
            get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data.role == 'admin')
         );
@@ -148,6 +161,48 @@ service cloud.firestore {
     match /cash_transactions/{transactionId} {
       allow read: if isAuthenticated() && (isAdmin() || isAccountant());
       allow write: if isAuthenticated() && (isAdmin() || isAccountant());
+    }
+
+    match /students/{studentId} {
+      allow read: if isAuthenticated() && (isAdmin() || isAccountant());
+      allow create, update: if isAuthenticated() && (isAdmin() || isAccountant());
+      allow delete: if isAdmin();
+
+      match /comments/{commentId} {
+        allow read: if isAuthenticated() && (isAdmin() || isAccountant());
+        allow create: if isAuthenticated() && (isAdmin() || isAccountant());
+        allow update, delete: if isAdmin();
+      }
+
+      match /timeline/{eventId} {
+        allow read: if isAuthenticated() && (isAdmin() || isAccountant());
+        allow create: if isAuthenticated();
+        allow update, delete: if false;
+      }
+
+      match /transactions/{transactionId} {
+        allow read: if isAuthenticated() && (isAdmin() || isAccountant());
+        allow create, update: if isAuthenticated() && (isAdmin() || isAccountant());
+        allow delete: if isAdmin();
+      }
+
+      match /skippedMonths/{skipId} {
+        allow read: if isAuthenticated() && (isAdmin() || isAccountant());
+        allow create: if isAuthenticated() && (isAdmin() || isAccountant());
+        allow delete: if isAdmin();
+      }
+    }
+
+    match /invoices/{invoiceId} {
+      allow read: if isAuthenticated() && (isAdmin() || isAccountant());
+      allow create, update: if isAuthenticated() && (isAdmin() || isAccountant());
+      allow delete: if isAdmin();
+    }
+
+    match /receipts/{receiptId} {
+      allow read: if isAuthenticated() && (isAdmin() || isAccountant());
+      allow create: if isAuthenticated() && (isAdmin() || isAccountant());
+      allow update, delete: if isAdmin();
     }
 
     match /settings/{settingId} {

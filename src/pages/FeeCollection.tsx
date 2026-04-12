@@ -15,18 +15,22 @@ import {
   ChevronDown
 } from 'lucide-react';
 import { formatCurrency, cn } from '../lib/utils';
-import { FeeCollection } from '../types';
+import { FeeCollection, Student } from '../types';
 import { handleFirestoreError, OperationType } from '../lib/firebase-utils';
 import { logActivity } from '../lib/activity-logger';
 import { motion, AnimatePresence } from 'framer-motion';
+import { writeBatch, doc, increment, limit } from 'firebase/firestore';
 
 import { useAuth } from '../contexts/AuthContext';
 
 export function FeeCollectionPage() {
   const { profile } = useAuth();
   const [collections, setCollections] = useState<FeeCollection[]>([]);
+  const [students, setStudents] = useState<Student[]>([]);
   const [loading, setLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [selectedStudent, setSelectedStudent] = useState<Student | null>(null);
   const [formData, setFormData] = useState({
     date: new Date().toISOString().split('T')[0],
     student_name: '',
@@ -39,6 +43,13 @@ export function FeeCollectionPage() {
     notes: '',
     paid_by: 'accountant' as 'owner' | 'accountant'
   });
+
+  useEffect(() => {
+    const unsubscribe = onSnapshot(collection(db, 'students'), (snap) => {
+      setStudents(snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Student)));
+    });
+    return () => unsubscribe();
+  }, []);
 
   useEffect(() => {
     if (profile?.role === 'admin') {
@@ -91,20 +102,66 @@ export function FeeCollectionPage() {
     return () => unsubscribe();
   }, [filters]);
 
-  // Removed fetchCollections as it's replaced by onSnapshot hook logic above
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setLoading(true);
     try {
+      const batch = writeBatch(db);
+      const feeRef = doc(collection(db, 'fee_collections'));
+      
       const txData = {
         ...formData,
+        student_id: selectedStudent?.id || null,
         date: Timestamp.fromDate(new Date(formData.date)),
         data_entry_by: auth.currentUser?.email?.split('@')[0] || 'Unknown',
         recorded_by: auth.currentUser?.uid,
         created_at: serverTimestamp()
       };
 
-      const docRef = await addDoc(collection(db, 'fee_collections'), txData);
+      batch.set(feeRef, txData);
+
+      // If a student is selected, update their balance and create a receipt
+      if (selectedStudent) {
+        // Update student balance
+        batch.update(doc(db, 'students', selectedStudent.id), {
+          totalBalance: increment(-formData.amount)
+        });
+
+        // Add timeline
+        const timelineRef = doc(collection(db, 'students', selectedStudent.id, 'timeline'));
+        batch.set(timelineRef, {
+          event: 'Fee Collected',
+          description: `Collected ₹${formData.amount} via Fee Collection module (${formData.payment_mode})`,
+          createdBy: profile?.full_name || 'System',
+          createdAt: serverTimestamp()
+        });
+
+        // Create a receipt
+        const q = query(collection(db, 'receipts'), orderBy('receiptNumber', 'desc'), limit(1));
+        const snap = await getDocs(q);
+        let lastNum = 0;
+        if (!snap.empty) {
+          lastNum = parseInt(snap.docs[0].data().receiptNumber.split('-')[1]);
+        }
+        const receiptNumber = `RCP-${(lastNum + 1).toString().padStart(6, '0')}`;
+
+        const receiptRef = doc(collection(db, 'receipts'));
+        batch.set(receiptRef, {
+          receiptNumber,
+          studentId: selectedStudent.id,
+          studentName: selectedStudent.studentName,
+          fatherName: selectedStudent.fatherName,
+          address: selectedStudent.address,
+          phoneNumber: selectedStudent.phoneNumber,
+          paymentDate: Timestamp.fromDate(new Date(formData.date)),
+          paymentMode: formData.payment_mode,
+          feeType: formData.fee_type,
+          receivedBy: formData.received_by || profile?.full_name || 'System',
+          amountReceived: formData.amount,
+          notes: formData.notes,
+          createdAt: serverTimestamp()
+        });
+      }
 
       // Log activity
       if (profile) {
@@ -118,24 +175,25 @@ export function FeeCollectionPage() {
       }
 
       if (formData.payment_mode === 'Cash') {
-        try {
-          await addDoc(collection(db, 'cash_transactions'), {
-            date: formData.date,
-            type: 'in',
-            category: 'fee_collection',
-            amount: formData.amount,
-            description: `Fee collection for ${formData.school_name}: ${formData.student_name}`,
-            linked_id: docRef.id,
-            paid_by: formData.paid_by,
-            created_by: auth.currentUser?.uid,
-            created_at: serverTimestamp()
-          });
-        } catch (error) {
-          handleFirestoreError(error, OperationType.CREATE, 'cash_transactions');
-        }
+        const cashRef = doc(collection(db, 'cash_transactions'));
+        batch.set(cashRef, {
+          date: formData.date,
+          type: 'in',
+          category: 'fee_collection',
+          amount: formData.amount,
+          description: `Fee collection for ${formData.school_name}: ${formData.student_name}`,
+          linked_id: feeRef.id,
+          paid_by: formData.paid_by,
+          created_by: auth.currentUser?.uid,
+          created_at: serverTimestamp()
+        });
       }
 
+      await batch.commit();
+
       setIsModalOpen(false);
+      setSelectedStudent(null);
+      setSearchTerm('');
       setFormData({
         date: new Date().toISOString().split('T')[0],
         student_name: '',
@@ -151,6 +209,8 @@ export function FeeCollectionPage() {
     } catch (error: any) {
       console.error('Error saving fee collection:', error);
       handleFirestoreError(error, OperationType.CREATE, 'fee_collections');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -439,29 +499,107 @@ export function FeeCollectionPage() {
                 </div>
 
                 <div className="space-y-2">
-                  <label className="label">Student Name</label>
-                  <input
-                    type="text"
-                    required
-                    value={formData.student_name}
-                    onChange={(e) => setFormData({ ...formData, student_name: e.target.value })}
-                    className="input"
-                    placeholder="Full name"
-                  />
+                  <label className="label">Search Student</label>
+                  <div className="relative">
+                    <input
+                      type="text"
+                      value={searchTerm}
+                      onChange={(e) => setSearchTerm(e.target.value)}
+                      className="input"
+                      placeholder="Search by name, school or stand..."
+                    />
+                    {searchTerm && !selectedStudent && (
+                      <div className="absolute z-10 w-full mt-1 bg-surface border border-border rounded-xl shadow-xl max-h-48 overflow-y-auto">
+                        {students
+                          .filter(s => {
+                            const name = s.studentName || '';
+                            const school = s.schoolName || '';
+                            const stand = s.standName || '';
+                            const search = searchTerm.toLowerCase();
+                            
+                            return name.toLowerCase().includes(search) ||
+                                   school.toLowerCase().includes(search) ||
+                                   stand.toLowerCase().includes(search);
+                          })
+                          .slice(0, 10)
+                          .map(s => (
+                            <button
+                              key={s.id}
+                              type="button"
+                              onClick={() => {
+                                setSelectedStudent(s);
+                                setSearchTerm(s.studentName);
+                                setFormData({
+                                  ...formData,
+                                  student_name: s.studentName,
+                                  school_name: s.schoolName
+                                });
+                              }}
+                              className="w-full px-4 py-2 text-left hover:bg-accent/5 transition-colors border-b border-border/50 last:border-0"
+                            >
+                              <p className="text-sm font-bold text-primary">{s.studentName}</p>
+                              <p className="text-[10px] text-secondary">{s.schoolName} • {s.standName} • {s.class}</p>
+                            </button>
+                          ))}
+                      </div>
+                    )}
+                  </div>
                 </div>
 
-                <div className="space-y-2">
-                  <label className="label">School Name</label>
-                  <select
-                    required
-                    value={formData.school_name}
-                    onChange={(e) => setFormData({ ...formData, school_name: e.target.value })}
-                    className="input"
-                  >
-                    <option value="">Select School</option>
-                    {schools.map(s => <option key={s} value={s}>{s}</option>)}
-                  </select>
-                </div>
+                {selectedStudent && (
+                  <div className="bg-accent/5 p-4 rounded-2xl border border-accent/10 space-y-1">
+                    <div className="flex justify-between items-start">
+                      <div>
+                        <p className="text-[10px] font-bold text-secondary uppercase tracking-widest">Selected Student</p>
+                        <p className="text-sm font-black text-primary">{selectedStudent.studentName}</p>
+                        <p className="text-[10px] text-secondary">{selectedStudent.schoolName} • {selectedStudent.standName}</p>
+                      </div>
+                      <button 
+                        type="button"
+                        onClick={() => {
+                          setSelectedStudent(null);
+                          setSearchTerm('');
+                          setFormData({ ...formData, student_name: '', school_name: '' });
+                        }}
+                        className="text-[10px] font-bold text-danger hover:underline"
+                      >
+                        Clear
+                      </button>
+                    </div>
+                    <div className="pt-2 mt-2 border-t border-accent/10">
+                      <p className="text-[10px] text-secondary">Outstanding Balance: <span className="font-bold text-danger">{formatCurrency(selectedStudent.totalBalance)}</span></p>
+                    </div>
+                  </div>
+                )}
+
+                {!selectedStudent && (
+                  <>
+                    <div className="space-y-2">
+                      <label className="label">Student Name (Manual)</label>
+                      <input
+                        type="text"
+                        required
+                        value={formData.student_name}
+                        onChange={(e) => setFormData({ ...formData, student_name: e.target.value })}
+                        className="input"
+                        placeholder="Full name"
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <label className="label">School Name (Manual)</label>
+                      <select
+                        required
+                        value={formData.school_name}
+                        onChange={(e) => setFormData({ ...formData, school_name: e.target.value })}
+                        className="input"
+                      >
+                        <option value="">Select School</option>
+                        {schools.map(s => <option key={s} value={s}>{s}</option>)}
+                      </select>
+                    </div>
+                  </>
+                )}
 
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">

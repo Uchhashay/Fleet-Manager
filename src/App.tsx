@@ -16,10 +16,13 @@ import { Cleanup } from './pages/Cleanup';
 import { UserManager } from './pages/UserManager';
 import { AccountantDashboard } from './pages/AccountantDashboard';
 import { Cashbook } from './pages/Cashbook';
+import { StudentDatabase } from './pages/StudentDatabase';
 import { FeeCollectionPage } from './pages/FeeCollection';
+import { InvoiceReceipt } from './pages/InvoiceReceipt';
 import { AccountantReports } from './pages/AccountantReports';
 import { DriverPerformance } from './pages/DriverPerformance';
 import { Settings } from './pages/Settings';
+import { ComingSoon } from './pages/ComingSoon';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { useAuth } from './contexts/AuthContext';
 
@@ -80,7 +83,27 @@ export default function App() {
               } />
               <Route path="fees" element={
                 <ProtectedRoute allowedRoles={['admin', 'accountant']}>
+                  <Navigate to="/fees/collection" replace />
+                </ProtectedRoute>
+              } />
+              <Route path="fees/collection" element={
+                <ProtectedRoute allowedRoles={['admin', 'accountant']}>
                   <FeeCollectionPage />
+                </ProtectedRoute>
+              } />
+              <Route path="fees/students" element={
+                <ProtectedRoute allowedRoles={['admin', 'accountant']}>
+                  <StudentDatabase />
+                </ProtectedRoute>
+              } />
+              <Route path="fees/invoices" element={
+                <ProtectedRoute allowedRoles={['admin', 'accountant']}>
+                  <InvoiceReceipt />
+                </ProtectedRoute>
+              } />
+              <Route path="fees/analysis" element={
+                <ProtectedRoute allowedRoles={['admin', 'accountant']}>
+                  <ComingSoon title="Tracking & Analysis" />
                 </ProtectedRoute>
               } />
               <Route path="monthly" element={

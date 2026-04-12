@@ -157,3 +157,127 @@ export interface FeeCollection {
   recorded_by: string;
   created_at: any;
 }
+
+export interface Student {
+  id: string;
+  studentName: string;
+  fatherName: string;
+  phoneNumber: string;
+  schoolName: string;
+  standName: string;
+  class: string;
+  address: string;
+  dateOfJoining: any; // Timestamp
+  feeAmount: number;
+  concession: number;
+  oldBalance: number;
+  totalBalance: number;
+  isActive: boolean;
+  session: string;
+  notes?: string;
+  createdAt: any;
+  updatedAt: any;
+}
+
+export interface StudentComment {
+  id: string;
+  text: string;
+  createdBy: string;
+  createdAt: any;
+}
+
+export interface StudentTimelineEvent {
+  id: string;
+  event: string;
+  description: string;
+  createdBy: string;
+  createdAt: any;
+}
+
+export interface StudentTransaction {
+  id: string;
+  invoiceNo: string;
+  month: string;
+  amount: number;
+  status: 'paid' | 'unpaid' | 'partial';
+  type: 'invoice' | 'receipt' | 'skip';
+  reason?: string;
+  createdAt: any;
+  createdBy: string;
+}
+
+export type InvoiceStatus = 'DRAFT' | 'SENT' | 'UNPAID' | 'PARTIAL' | 'PAID' | 'OVERDUE';
+
+export interface Invoice {
+  id: string;
+  invoiceNumber: string;
+  studentId: string;
+  studentName: string;
+  fatherName: string;
+  schoolName: string;
+  standName: string;
+  address: string;
+  phoneNumber: string;
+  invoiceDate: any;
+  dueDate: any;
+  month: string;
+  feeAmount: number;
+  profileConcession: number;
+  invoiceConcession: number;
+  concession: number; // Total concession (profile + invoice)
+  totalAmount: number;
+  paidAmount: number;
+  balanceDue: number;
+  status: InvoiceStatus;
+  itemDescription?: string;
+  notes?: string;
+  terms?: string;
+  editHistory?: { editedBy: string; editedAt: any; userName: string }[];
+  createdBy: string;
+  createdAt: any;
+  updatedAt: any;
+}
+
+export interface Receipt {
+  id: string;
+  receiptNumber: string;
+  invoiceId: string;
+  invoiceNumber: string;
+  studentId: string;
+  studentName: string;
+  fatherName: string;
+  address: string;
+  phoneNumber: string;
+  paymentDate: any;
+  paymentMode: 'Cash' | 'UPI' | 'Bank Transfer';
+  feeType: 'Sunday Doorstep' | 'Regular via Driver';
+  receivedBy: string;
+  amountReceived: number;
+  amountInWords: string;
+  notes?: string;
+  createdAt: any;
+}
+
+export interface SkippedMonth {
+  id: string;
+  month: string;
+  reason: string;
+  skippedBy: string;
+  skippedAt: any;
+}
+
+export interface Organization {
+  name: string;
+  industry?: string;
+  location?: string;
+  address_line1?: string;
+  address_line2?: string;
+  zip_code?: string;
+  phone?: string;
+  fax?: string;
+  website?: string;
+  email?: string;
+  logo_url?: string;
+  updated_at?: any;
+  updated_by?: string;
+}
