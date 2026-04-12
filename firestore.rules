@@ -39,6 +39,20 @@ service cloud.firestore {
     //   - fuel_amount: number
     //   - ... (collection fields)
     //
+    // Collection: settings
+    // Document ID: organization
+    // Fields:
+    //   - name: string (required)
+    //   - industry: string
+    //   - location: string
+    //   - address_line1: string
+    //   - address_line2: string
+    //   - zip_code: string
+    //   - phone: string
+    //   - fax: string
+    //   - website: string
+    //   - logo_url: string (base64 or URL)
+    //
     // ===============================================================
 
     // ===============================================================

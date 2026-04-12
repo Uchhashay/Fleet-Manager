@@ -12,7 +12,9 @@ import {
   ArrowUpRight,
   ArrowDownRight,
   GraduationCap,
-  Activity
+  Activity,
+  Calendar,
+  RefreshCw
 } from 'lucide-react';
 import { 
   BarChart, 
@@ -27,12 +29,17 @@ import {
   Cell,
   Legend
 } from 'recharts';
-import { format, subMonths, startOfMonth, endOfMonth, startOfDay, endOfDay } from 'date-fns';
+import { format, subMonths, startOfMonth, endOfMonth, startOfDay, endOfDay, subDays, startOfWeek, endOfWeek } from 'date-fns';
 import { AccountantTransaction, FeeCollection, Bus, Staff, Profile } from '../types';
 import { motion, AnimatePresence } from 'framer-motion';
 
 export function Dashboard() {
   const [showCombined, setShowCombined] = useState(false);
+  const [timeframe, setTimeframe] = useState<'today' | 'yesterday' | 'week' | 'month' | 'custom'>('month');
+  const [customRange, setCustomRange] = useState({
+    start: format(startOfMonth(new Date()), 'yyyy-MM-dd'),
+    end: format(new Date(), 'yyyy-MM-dd')
+  });
   const [accountantIds, setAccountantIds] = useState<string[]>([]);
   const [rawData, setRawData] = useState<{
     records: any[],
@@ -70,7 +77,7 @@ export function Dashboard() {
     if (rawData) {
       calculateStats();
     }
-  }, [showCombined, rawData, accountantIds]);
+  }, [showCombined, timeframe, customRange, rawData, accountantIds]);
 
   async function fetchDashboardData() {
     setLoading(true);
@@ -176,19 +183,49 @@ export function Dashboard() {
       }
     });
 
-    // Current Month Filter for KPIs
+    // Determine date range for KPIs
     const now = new Date();
-    const monthStartStr = format(startOfMonth(now), 'yyyy-MM-dd');
-    const monthEndStr = format(endOfMonth(now), 'yyyy-MM-dd');
+    let startDate: Date;
+    let endDate: Date;
+
+    switch (timeframe) {
+      case 'today':
+        startDate = startOfDay(now);
+        endDate = endOfDay(now);
+        break;
+      case 'yesterday':
+        startDate = startOfDay(subDays(now, 1));
+        endDate = endOfDay(subDays(now, 1));
+        break;
+      case 'week':
+        startDate = startOfWeek(now, { weekStartsOn: 1 });
+        endDate = endOfWeek(now, { weekStartsOn: 1 });
+        break;
+      case 'month':
+        startDate = startOfMonth(now);
+        endDate = endOfMonth(now);
+        break;
+      case 'custom':
+        startDate = startOfDay(new Date(customRange.start));
+        endDate = endOfDay(new Date(customRange.end));
+        break;
+      default:
+        startDate = startOfMonth(now);
+        endDate = endOfMonth(now);
+        break;
+    }
+
+    const startStr = format(startDate, 'yyyy-MM-dd');
+    const endStr = format(endDate, 'yyyy-MM-dd');
     
-    const currentRecords = records.filter((r: any) => r.date >= monthStartStr && r.date <= monthEndStr);
-    const currentBusExpenses = busExpenses.filter((e: any) => e.date >= monthStartStr && e.date <= monthEndStr);
-    const currentCompanyExpenses = companyExpenses.filter((e: any) => e.date >= monthStartStr && e.date <= monthEndStr);
+    const currentRecords = records.filter((r: any) => r.date >= startStr && r.date <= endStr);
+    const currentBusExpenses = busExpenses.filter((e: any) => e.date >= startStr && e.date <= endStr);
+    const currentCompanyExpenses = companyExpenses.filter((e: any) => e.date >= startStr && e.date <= endStr);
     const currentFeeCollections = feeCollections.filter((f: any) => {
       const date = f.date instanceof Timestamp ? f.date.toDate() : new Date(f.date);
-      return date >= startOfMonth(now) && date <= endOfMonth(now);
+      return date >= startDate && date <= endDate;
     });
-    const currentCashTransactions = filteredCashTransactions.filter((t: any) => t.date >= monthStartStr && t.date <= monthEndStr);
+    const currentCashTransactions = filteredCashTransactions.filter((t: any) => t.date >= startStr && t.date <= endStr);
 
     // Calculate KPIs
     const totalCollections = currentRecords.reduce((sum, r: any) => 
@@ -315,7 +352,10 @@ export function Dashboard() {
     setStaffOverview(staffList);
 
     // Recent Activity
-    const recent = currentRecords.slice(0, 10).map((r: any) => {
+    const recent = [...currentRecords]
+      .sort((a, b) => b.date.localeCompare(a.date))
+      .slice(0, 10)
+      .map((r: any) => {
       const bus = buses.find(b => b.id === r.bus_id);
       return {
         date: r.date,
@@ -343,6 +383,50 @@ export function Dashboard() {
         <div className="flex items-center justify-between">
           <h1 className="text-3xl font-bold tracking-tight text-primary">Admin Dashboard</h1>
           <div className="flex items-center space-x-4">
+            {/* Timeframe Selector */}
+            <div className="flex items-center bg-surface p-1 rounded-xl border border-border shadow-sm">
+              {[
+                { id: 'today', label: 'Today' },
+                { id: 'yesterday', label: 'Yesterday' },
+                { id: 'week', label: 'Week' },
+                { id: 'month', label: 'Month' },
+                { id: 'custom', label: 'Custom' },
+              ].map((tf) => (
+                <button
+                  key={tf.id}
+                  onClick={() => setTimeframe(tf.id as any)}
+                  className={cn(
+                    "px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider rounded-lg transition-all",
+                    timeframe === tf.id ? "bg-accent text-white shadow-md" : "text-secondary hover:text-primary"
+                  )}
+                >
+                  {tf.label}
+                </button>
+              ))}
+            </div>
+
+            {timeframe === 'custom' && (
+              <motion.div 
+                initial={{ opacity: 0, x: 20 }}
+                animate={{ opacity: 1, x: 0 }}
+                className="flex items-center space-x-2 bg-surface p-1 rounded-xl border border-border shadow-sm"
+              >
+                <input 
+                  type="date" 
+                  value={customRange.start}
+                  onChange={(e) => setCustomRange(prev => ({ ...prev, start: e.target.value }))}
+                  className="bg-transparent text-[10px] font-bold text-primary border-none focus:ring-0 p-1"
+                />
+                <span className="text-secondary text-[10px] font-bold">to</span>
+                <input 
+                  type="date" 
+                  value={customRange.end}
+                  onChange={(e) => setCustomRange(prev => ({ ...prev, end: e.target.value }))}
+                  className="bg-transparent text-[10px] font-bold text-primary border-none focus:ring-0 p-1"
+                />
+              </motion.div>
+            )}
+
             <div className="flex items-center bg-surface p-1 rounded-xl border border-border shadow-sm">
               <div className="relative group">
                 <button
@@ -380,8 +464,27 @@ export function Dashboard() {
                 </div>
               </div>
             </div>
-            <div className="text-xs font-medium text-secondary bg-surface px-3 py-1.5 rounded-full border border-border">
-              {format(new Date(), 'MMMM yyyy')}
+            <div className="flex items-center space-x-2">
+              <button 
+                onClick={() => fetchDashboardData()}
+                className={cn(
+                  "p-2 text-secondary hover:text-primary transition-colors rounded-full hover:bg-surface",
+                  loading && "cursor-not-allowed"
+                )}
+                title="Refresh Data"
+              >
+                <RefreshCw className={cn("h-4 w-4 stroke-[1.5px]", loading && "animate-spin")} />
+              </button>
+              <div className="text-xs font-medium text-secondary bg-surface px-3 py-1.5 rounded-full border border-border flex items-center space-x-2">
+                <Calendar className="h-3.5 w-3.5 stroke-[1.5px]" />
+                <span>
+                  {timeframe === 'today' ? format(new Date(), 'dd MMM yyyy') : 
+                   timeframe === 'yesterday' ? format(subDays(new Date(), 1), 'dd MMM yyyy') : 
+                   timeframe === 'week' ? `${format(startOfWeek(new Date(), { weekStartsOn: 1 }), 'dd MMM')} - ${format(endOfWeek(new Date(), { weekStartsOn: 1 }), 'dd MMM')}` : 
+                   timeframe === 'month' ? format(new Date(), 'MMMM yyyy') : 
+                   `${format(new Date(customRange.start), 'dd MMM')} - ${format(new Date(customRange.end), 'dd MMM')}`}
+                </span>
+              </div>
             </div>
           </div>
         </div>

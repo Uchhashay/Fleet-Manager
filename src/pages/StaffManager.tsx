@@ -5,6 +5,7 @@ import { Staff, UserRole } from '../types';
 import { formatCurrency, cn } from '../lib/utils';
 import { UserPlus, Trash2, Edit2, X, Save, Users, Briefcase, IndianRupee, Clock, BarChart2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { logActivity } from '../lib/activity-logger';
 

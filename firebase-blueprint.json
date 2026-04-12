@@ -171,6 +171,26 @@
         "created_at": { "type": "string", "format": "date-time", "description": "Creation timestamp." }
       },
       "required": ["date", "type", "category", "amount", "description"]
+    },
+    "Organization": {
+      "title": "Organization",
+      "description": "Stores organization profile and branding information.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "description": "Name of the organization." },
+        "industry": { "type": "string", "description": "Industry type." },
+        "location": { "type": "string", "description": "General location." },
+        "address_line1": { "type": "string", "description": "Street address line 1." },
+        "address_line2": { "type": "string", "description": "Street address line 2." },
+        "zip_code": { "type": "string", "description": "Zip or postal code." },
+        "phone": { "type": "string", "description": "Contact phone number." },
+        "fax": { "type": "string", "description": "Fax number." },
+        "website": { "type": "string", "description": "Website URL." },
+        "logo_url": { "type": "string", "description": "Data URL or link to the organization logo." },
+        "updated_at": { "type": "string", "format": "date-time", "description": "Last update timestamp." },
+        "updated_by": { "type": "string", "description": "UID of the user who last updated the profile." }
+      },
+      "required": ["name"]
     }
   },
   "firestore": {
@@ -213,6 +233,10 @@
     "/cash_transactions/{transactionId}": {
       "schema": "CashTransaction",
       "description": "Accountant cash transactions."
+    },
+    "/settings/organization": {
+      "schema": "Organization",
+      "description": "Organization profile settings."
     }
   }
 }
