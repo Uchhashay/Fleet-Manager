@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { db } from '../lib/firebase';
 import { 
   collection, 
@@ -52,8 +52,34 @@ import {
   ResponsiveContainer,
   Cell
 } from 'recharts';
-import { format, startOfMonth, endOfMonth, subMonths } from 'date-fns';
+import { 
+  format, 
+  startOfMonth, 
+  endOfMonth, 
+  subMonths,
+  startOfDay,
+  endOfDay,
+  startOfWeek,
+  endOfWeek,
+  startOfQuarter,
+  endOfQuarter,
+  startOfYear,
+  endOfYear,
+  subDays,
+  subWeeks,
+  subQuarters,
+  subYears
+} from 'date-fns';
 import { generateStatementPDF } from '../lib/pdf-service';
+
+import { RaiseSingleInvoiceModal } from './RaiseSingleInvoiceModal';
+import { RecordPaymentModal } from './RecordPaymentModal';
+import { InvoiceViewModal } from './InvoiceViewModal';
+import { ReceiptDetailModal } from './ReceiptDetailModal';
+import { EditInvoiceModal } from './EditInvoiceModal';
+import { CustomDateRangePicker } from './CustomDateRangePicker';
+import { generateInvoicePDF, generateReceiptPDF } from '../lib/pdf-service';
+import { writeBatch } from 'firebase/firestore';
 
 interface StudentProfileModalProps {
   student: Student;
@@ -69,16 +95,96 @@ export function StudentProfileModal({ student, isOpen, onClose, onEdit }: Studen
   const [activeTab, setActiveTab] = useState<TabType>('overview');
   const [comments, setComments] = useState<StudentComment[]>([]);
   const [timeline, setTimeline] = useState<StudentTimelineEvent[]>([]);
-  const [transactions, setTransactions] = useState<StudentTransaction[]>([]);
   const [studentInvoices, setStudentInvoices] = useState<Invoice[]>([]);
+  const [studentReceipts, setStudentReceipts] = useState<Receipt[]>([]);
   const [org, setOrg] = useState<Organization | null>(null);
   const [dateRange, setDateRange] = useState({
-    start: subMonths(new Date(), 6),
-    end: new Date()
+    start: startOfMonth(new Date()),
+    end: endOfMonth(new Date())
   });
+  const [filterType, setFilterType] = useState('This Month');
+  const [isCustomDatePickerOpen, setIsCustomDatePickerOpen] = useState(false);
   const [newComment, setNewComment] = useState('');
   const [isTransactionMenuOpen, setIsTransactionMenuOpen] = useState(false);
   const [loading, setLoading] = useState(false);
+
+  const handleFilterChange = (type: string) => {
+    setFilterType(type);
+    const now = new Date();
+    let start = new Date();
+    let end = new Date();
+
+    switch (type) {
+      case 'Today':
+        start = startOfDay(now);
+        end = endOfDay(now);
+        break;
+      case 'This Week':
+        start = startOfWeek(now);
+        end = endOfWeek(now);
+        break;
+      case 'This Month':
+        start = startOfMonth(now);
+        end = endOfMonth(now);
+        break;
+      case 'This Quarter':
+        start = startOfQuarter(now);
+        end = endOfQuarter(now);
+        break;
+      case 'This Year':
+        start = startOfYear(now);
+        end = endOfYear(now);
+        break;
+      case 'Yesterday':
+        start = startOfDay(subDays(now, 1));
+        end = endOfDay(subDays(now, 1));
+        break;
+      case 'Previous Week':
+        start = startOfWeek(subWeeks(now, 1));
+        end = endOfWeek(subWeeks(now, 1));
+        break;
+      case 'Previous Month':
+        start = startOfMonth(subMonths(now, 1));
+        end = endOfMonth(subMonths(now, 1));
+        break;
+      case 'Previous Quarter':
+        start = startOfQuarter(subQuarters(now, 1));
+        end = endOfQuarter(subQuarters(now, 1));
+        break;
+      case 'Previous Year':
+        start = startOfYear(subYears(now, 1));
+        end = endOfYear(subYears(now, 1));
+        break;
+      case 'Custom':
+        setIsCustomDatePickerOpen(true);
+        return;
+      default:
+        return;
+    }
+    setDateRange({ start, end });
+  };
+
+  const filteredInvoicesForStatement = useMemo(() => {
+    return studentInvoices.filter(inv => {
+      const invDate = inv.createdAt?.toDate ? inv.createdAt.toDate() : new Date(inv.createdAt || 0);
+      return invDate >= dateRange.start && invDate <= dateRange.end;
+    }).sort((a, b) => {
+      const dateA = a.createdAt?.toDate ? a.createdAt.toDate() : new Date(a.createdAt || 0);
+      const dateB = b.createdAt?.toDate ? b.createdAt.toDate() : new Date(b.createdAt || 0);
+      return dateB.getTime() - dateA.getTime();
+    });
+  }, [studentInvoices, dateRange]);
+
+  const filteredReceiptsForStatement = useMemo(() => {
+    return studentReceipts.filter(rcp => {
+      const rcpDate = rcp.createdAt?.toDate ? rcp.createdAt.toDate() : new Date(rcp.createdAt || 0);
+      return rcpDate >= dateRange.start && rcpDate <= dateRange.end;
+    }).sort((a, b) => {
+      const dateA = a.createdAt?.toDate ? a.createdAt.toDate() : new Date(a.createdAt || 0);
+      const dateB = b.createdAt?.toDate ? b.createdAt.toDate() : new Date(b.createdAt || 0);
+      return dateB.getTime() - dateA.getTime();
+    });
+  }, [studentReceipts, dateRange]);
 
   useEffect(() => {
     if (!isOpen || !student.id) return;
@@ -103,14 +209,15 @@ export function StudentProfileModal({ student, isOpen, onClose, onEdit }: Studen
       handleFirestoreError(error, OperationType.LIST, `students/${student.id}/timeline`);
     });
 
-    const transactionsQuery = query(
-      collection(db, 'students', student.id, 'transactions'),
+    const receiptsQuery = query(
+      collection(db, 'receipts'),
+      where('studentId', '==', student.id),
       orderBy('createdAt', 'desc')
     );
-    const unsubscribeTransactions = onSnapshot(transactionsQuery, (snapshot) => {
-      setTransactions(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as StudentTransaction)));
+    const unsubscribeReceipts = onSnapshot(receiptsQuery, (snapshot) => {
+      setStudentReceipts(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Receipt)));
     }, (error) => {
-      handleFirestoreError(error, OperationType.LIST, `students/${student.id}/transactions`);
+      handleFirestoreError(error, OperationType.LIST, 'receipts');
     });
 
     const invoicesQuery = query(
@@ -133,7 +240,7 @@ export function StudentProfileModal({ student, isOpen, onClose, onEdit }: Studen
     return () => {
       unsubscribeComments();
       unsubscribeTimeline();
-      unsubscribeTransactions();
+      unsubscribeReceipts();
       unsubscribeInvoices();
       unsubscribeOrg();
     };
@@ -155,13 +262,128 @@ export function StudentProfileModal({ student, isOpen, onClose, onEdit }: Studen
     }
   };
 
+  const [isRaiseInvoiceModalOpen, setIsRaiseInvoiceModalOpen] = useState(false);
+  const [isRecordPaymentModalOpen, setIsRecordPaymentModalOpen] = useState(false);
+  const [selectedInvoiceForPayment, setSelectedInvoiceForPayment] = useState<Invoice | null>(null);
+  const [selectedInvoiceForView, setSelectedInvoiceForView] = useState<Invoice | null>(null);
+  const [selectedReceiptForView, setSelectedReceiptForView] = useState<Receipt | null>(null);
+  const [isInvoiceViewModalOpen, setIsInvoiceViewModalOpen] = useState(false);
+  const [isReceiptDetailModalOpen, setIsReceiptDetailModalOpen] = useState(false);
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [selectedInvoiceForEdit, setSelectedInvoiceForEdit] = useState<Invoice | null>(null);
+
+  const handleDownloadPDF = (type: 'invoice' | 'receipt', item: any) => {
+    const defaultOrg: Organization = {
+      name: 'Jagriti Tours & Travels',
+      address_line1: 'E-10, Gali No-6, Tomar Colony, Burari',
+      address_line2: 'Delhi',
+      zip_code: '110084',
+      phone: '9811387399',
+      website: 'www.jagrititoursandtravels.com',
+      email: 'jagrititours@gmail.com'
+    };
+
+    const organization = org || defaultOrg;
+    
+    try {
+      let docObj;
+      if (type === 'invoice') {
+        docObj = generateInvoicePDF(item, organization);
+      } else {
+        let inv = studentInvoices.find(i => i.id === item.invoiceId);
+        if (!inv) {
+          inv = {
+            invoiceNumber: item.invoiceNumber || 'N/A',
+            invoiceDate: item.paymentDate,
+            totalAmount: item.amountReceived || 0,
+            paidAmount: item.amountReceived || 0,
+            balanceDue: 0,
+          } as any;
+        }
+        docObj = generateReceiptPDF(item, inv, organization);
+      }
+      docObj.save(`${type === 'invoice' ? item.invoiceNumber : item.receiptNumber}.pdf`);
+    } catch (error) {
+      console.error('Error generating PDF:', error);
+      alert('Failed to generate PDF. Please try again.');
+    }
+  };
+
+  const handleWhatsApp = (type: 'invoice' | 'receipt', item: any) => {
+    let message = '';
+    if (type === 'invoice') {
+      const dueDateStr = item.dueDate?.toDate ? format(item.dueDate.toDate(), 'dd MMM yyyy') : format(new Date(item.dueDate), 'dd MMM yyyy');
+      message = `Dear ${item.fatherName}, Please find attached invoice [${item.invoiceNumber}] for [${item.month}] transport fees of ₹${item.totalAmount} for ${item.studentName}. Due Date: ${dueDateStr}. Thank you. - Jagriti Tours & Travels`;
+    } else {
+      const desc = item.description || `invoice [${item.invoiceNumber}]`;
+      message = `Dear ${item.fatherName}, Payment of ₹${item.amountReceived} received for ${item.studentName} against ${desc}. Receipt No: [${item.receiptNumber}]. Thank you. - Jagriti Tours & Travels`;
+    }
+    
+    const encodedMessage = encodeURIComponent(message);
+    const whatsappUrl = `https://web.whatsapp.com/send?phone=91${item.phoneNumber}&text=${encodedMessage}`;
+    window.open(whatsappUrl, '_blank');
+    alert('PDF generated. Please download it and attach it to the WhatsApp message.');
+    handleDownloadPDF(type, item);
+  };
+
+  const handleDeleteInvoice = async (inv: Invoice) => {
+    try {
+      const batch = writeBatch(db);
+      batch.delete(doc(db, 'invoices', inv.id));
+      
+      batch.update(doc(db, 'students', inv.studentId), {
+        totalBalance: increment(-inv.balanceDue)
+      });
+      
+      const timelineRef = doc(collection(db, 'students', inv.studentId, 'timeline'));
+      batch.set(timelineRef, {
+        event: 'Invoice Deleted',
+        description: `Invoice ${inv.invoiceNumber} was deleted`,
+        createdBy: profile?.full_name || 'System',
+        createdAt: serverTimestamp()
+      });
+      
+      await batch.commit();
+      alert('Invoice deleted successfully.');
+    } catch (error) {
+      console.error('Error deleting invoice:', error);
+      handleFirestoreError(error, OperationType.DELETE, `invoices/${inv.id}`);
+    }
+  };
+
   const handleTransaction = async (type: 'invoice' | 'receipt' | 'skip') => {
     if (!profile) return;
+    
+    if (type === 'invoice') {
+      setIsRaiseInvoiceModalOpen(true);
+      setIsTransactionMenuOpen(false);
+      return;
+    }
+
+    if (type === 'receipt') {
+      // Find oldest unpaid invoice
+      const unpaidInvoices = studentInvoices
+        .filter(inv => inv.status !== 'PAID')
+        .sort((a, b) => {
+          const dateA = a.invoiceDate.toDate ? a.invoiceDate.toDate() : new Date(a.invoiceDate);
+          const dateB = b.invoiceDate.toDate ? b.invoiceDate.toDate() : new Date(b.invoiceDate);
+          return dateA.getTime() - dateB.getTime();
+        });
+      
+      if (unpaidInvoices.length > 0) {
+        setSelectedInvoiceForPayment(unpaidInvoices[0]);
+        setIsRecordPaymentModalOpen(true);
+      } else {
+        alert('No unpaid invoices found for this student.');
+      }
+      setIsTransactionMenuOpen(false);
+      return;
+    }
+
     setLoading(true);
     setIsTransactionMenuOpen(false);
 
     try {
-      const amount = type === 'invoice' ? student.feeAmount - student.concession : 0;
       const month = format(new Date(), 'MMMM yyyy');
       
       if (type === 'skip') {
@@ -173,32 +395,13 @@ export function StudentProfileModal({ student, isOpen, onClose, onEdit }: Studen
         });
       }
 
-      const transactionData = {
-        type,
-        month,
-        amount,
-        status: type === 'invoice' ? 'unpaid' : 'paid',
-        invoiceNo: type === 'invoice' ? `INV-${Date.now().toString().slice(-6)}` : '',
-        createdAt: serverTimestamp(),
-        createdBy: profile.full_name
-      };
-
-      await addDoc(collection(db, 'students', student.id, 'transactions'), transactionData);
-
       // Add to timeline
       await addDoc(collection(db, 'students', student.id, 'timeline'), {
-        event: type === 'invoice' ? 'Invoice Raised' : type === 'receipt' ? 'Payment Recorded' : 'Month Skipped',
-        description: `${type === 'invoice' ? 'Invoice' : type === 'receipt' ? 'Payment' : 'Skip'} for ${month}`,
+        event: 'Month Skipped',
+        description: `Month ${month} was manually skipped`,
         createdBy: profile.full_name,
         createdAt: serverTimestamp()
       });
-
-      // Update student balance if needed
-      if (type === 'invoice') {
-        await updateDoc(doc(db, 'students', student.id), {
-          totalBalance: increment(amount)
-        });
-      }
 
     } catch (error) {
       console.error('Error recording transaction:', error);
@@ -207,15 +410,44 @@ export function StudentProfileModal({ student, isOpen, onClose, onEdit }: Studen
     }
   };
 
-  // Mock data for chart (last 6 months collections)
-  const chartData = [
-    { month: 'Oct', amount: 1200 },
-    { month: 'Nov', amount: 1500 },
-    { month: 'Dec', amount: 1100 },
-    { month: 'Jan', amount: 1800 },
-    { month: 'Feb', amount: 1400 },
-    { month: 'Mar', amount: 1600 },
-  ];
+  // Real data for chart (last 6 months collections)
+  const chartData = useMemo(() => {
+    const last6Months = Array.from({ length: 6 }).map((_, i) => {
+      const date = subMonths(new Date(), i);
+      return {
+        month: format(date, 'MMM'),
+        fullMonth: format(date, 'MMMM yyyy'),
+        amount: 0
+      };
+    }).reverse();
+
+    studentReceipts.forEach(rcp => {
+      const rcpDate = rcp.paymentDate.toDate ? rcp.paymentDate.toDate() : new Date(rcp.paymentDate);
+      const rcpMonth = format(rcpDate, 'MMM');
+      const monthData = last6Months.find(m => m.month === rcpMonth);
+      if (monthData) {
+        monthData.amount += rcp.amountReceived;
+      }
+    });
+
+    return last6Months;
+  }, [studentReceipts]);
+
+  const totalPaid = useMemo(() => {
+    return studentReceipts.reduce((sum, rcp) => sum + rcp.amountReceived, 0);
+  }, [studentReceipts]);
+
+  const mergedTransactions = useMemo(() => {
+    const txs: any[] = [
+      ...studentInvoices.map(inv => ({ ...inv, txType: 'invoice', date: inv.createdAt })),
+      ...studentReceipts.map(rcp => ({ ...rcp, txType: 'receipt', date: rcp.createdAt }))
+    ];
+    return txs.sort((a, b) => {
+      const dateA = a.date?.toDate ? a.date.toDate() : new Date(a.date || 0);
+      const dateB = b.date?.toDate ? b.date.toDate() : new Date(b.date || 0);
+      return dateB.getTime() - dateA.getTime();
+    });
+  }, [studentInvoices, studentReceipts]);
 
   const formatDate = (date: any) => {
     if (!date) return 'N/A';
@@ -545,11 +777,11 @@ export function StudentProfileModal({ student, isOpen, onClose, onEdit }: Studen
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                         <div className="card bg-accent/5 border-accent/10 p-4">
                           <p className="text-[10px] font-bold text-accent uppercase tracking-widest mb-1">Total Paid</p>
-                          <p className="text-2xl font-black text-primary">₹8,400</p>
+                          <p className="text-2xl font-black text-primary">{formatCurrency(totalPaid)}</p>
                         </div>
                         <div className="card bg-warning/5 border-warning/10 p-4">
-                          <p className="text-[10px] font-bold text-warning uppercase tracking-widest mb-1">Months Skipped</p>
-                          <p className="text-2xl font-black text-primary">1</p>
+                          <p className="text-[10px] font-bold text-warning uppercase tracking-widest mb-1">Invoices Raised</p>
+                          <p className="text-2xl font-black text-primary">{studentInvoices.length}</p>
                         </div>
                       </div>
                     </motion.div>
@@ -610,31 +842,40 @@ export function StudentProfileModal({ student, isOpen, onClose, onEdit }: Studen
                       exit={{ opacity: 0, y: 10 }}
                       className="space-y-4"
                     >
-                      {transactions.length === 0 ? (
+                      {mergedTransactions.length === 0 ? (
                         <div className="flex flex-col items-center justify-center h-40 text-secondary">
                           <CreditCard className="h-12 w-12 opacity-20 mb-2" />
                           <p className="text-sm font-medium">No transactions recorded</p>
                         </div>
                       ) : (
-                        transactions.map(tx => (
-                          <div key={tx.id} className="card bg-background/50 border-border/50 p-4 flex items-center justify-between">
+                        mergedTransactions.map(tx => (
+                          <div 
+                            key={tx.id} 
+                            className="card bg-background/50 border-border/50 p-4 flex items-center justify-between hover:bg-accent/5 transition-colors cursor-pointer"
+                            onClick={() => {
+                              if (tx.txType === 'invoice') {
+                                setSelectedInvoiceForView(tx);
+                                setIsInvoiceViewModalOpen(true);
+                              } else {
+                                setSelectedReceiptForView(tx);
+                                setIsReceiptDetailModalOpen(true);
+                              }
+                            }}
+                          >
                             <div className="flex items-center space-x-4">
                               <div className={cn(
                                 "h-10 w-10 rounded-xl flex items-center justify-center",
-                                tx.type === 'invoice' ? "bg-accent/10 text-accent" : 
-                                tx.type === 'receipt' ? "bg-success/10 text-success" : "bg-warning/10 text-warning"
+                                tx.txType === 'invoice' ? "bg-accent/10 text-accent" : "bg-success/10 text-success"
                               )}>
-                                {tx.type === 'invoice' ? <FileText className="h-5 w-5" /> : 
-                                 tx.type === 'receipt' ? <CheckCircle2 className="h-5 w-5" /> : <SkipForward className="h-5 w-5" />}
+                                {tx.txType === 'invoice' ? <FileText className="h-5 w-5" /> : <CheckCircle2 className="h-5 w-5" />}
                               </div>
                               <div>
                                 <div className="flex items-center space-x-2">
                                   <span className="text-sm font-black text-primary">
-                                    {tx.type === 'invoice' ? `Invoice ${tx.invoiceNo}` : 
-                                     tx.type === 'receipt' ? 'Payment Received' : 'Month Skipped'}
+                                    {tx.txType === 'invoice' ? `Invoice ${tx.invoiceNumber}` : `Receipt ${tx.receiptNumber}`}
                                   </span>
                                   <span className="text-[10px] font-bold text-secondary uppercase tracking-wider bg-background px-2 py-0.5 rounded-md">
-                                    {tx.month}
+                                    {tx.month || format(tx.paymentDate?.toDate ? tx.paymentDate.toDate() : new Date(tx.paymentDate || 0), 'MMM yyyy')}
                                   </span>
                                 </div>
                                 <p className="text-[10px] text-secondary font-medium">
@@ -643,13 +884,15 @@ export function StudentProfileModal({ student, isOpen, onClose, onEdit }: Studen
                               </div>
                             </div>
                             <div className="text-right">
-                              <p className="text-sm font-black text-primary">{formatCurrency(tx.amount)}</p>
+                              <p className="text-sm font-black text-primary">
+                                {formatCurrency(tx.txType === 'invoice' ? tx.totalAmount : tx.amountReceived)}
+                              </p>
                               <span className={cn(
                                 "text-[10px] font-bold uppercase tracking-widest",
-                                tx.status === 'paid' ? "text-success" : 
-                                tx.status === 'unpaid' ? "text-danger" : "text-warning"
+                                tx.status === 'PAID' || tx.txType === 'receipt' ? "text-success" : 
+                                tx.status === 'UNPAID' ? "text-danger" : "text-warning"
                               )}>
-                                {tx.status}
+                                {tx.txType === 'receipt' ? 'RECEIVED' : tx.status}
                               </span>
                             </div>
                           </div>
@@ -669,29 +912,44 @@ export function StudentProfileModal({ student, isOpen, onClose, onEdit }: Studen
                       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                         <div className="flex items-center space-x-4">
                           <div className="space-y-1">
-                            <label className="text-[10px] font-bold text-secondary uppercase tracking-widest">From</label>
-                            <input 
-                              type="date" 
-                              value={format(dateRange.start, 'yyyy-MM-dd')}
-                              onChange={(e) => setDateRange({ ...dateRange, start: new Date(e.target.value) })}
-                              className="input py-1 px-3 text-xs bg-background"
-                            />
+                            <label className="text-[10px] font-bold text-secondary uppercase tracking-widest">Date Filter</label>
+                            <select 
+                              value={filterType}
+                              onChange={(e) => handleFilterChange(e.target.value)}
+                              className="input py-1 px-3 text-xs bg-background min-w-[150px]"
+                            >
+                              <option value="Today">Today</option>
+                              <option value="This Week">This Week</option>
+                              <option value="This Month">This Month</option>
+                              <option value="This Quarter">This Quarter</option>
+                              <option value="This Year">This Year</option>
+                              <option value="Yesterday">Yesterday</option>
+                              <option value="Previous Week">Previous Week</option>
+                              <option value="Previous Month">Previous Month</option>
+                              <option value="Previous Quarter">Previous Quarter</option>
+                              <option value="Previous Year">Previous Year</option>
+                              <option value="Custom">Custom</option>
+                            </select>
                           </div>
-                          <div className="space-y-1">
-                            <label className="text-[10px] font-bold text-secondary uppercase tracking-widest">To</label>
-                            <input 
-                              type="date" 
-                              value={format(dateRange.end, 'yyyy-MM-dd')}
-                              onChange={(e) => setDateRange({ ...dateRange, end: new Date(e.target.value) })}
-                              className="input py-1 px-3 text-xs bg-background"
-                            />
-                          </div>
+                          {filterType === 'Custom' && (
+                            <div className="flex items-center space-x-2 pt-4">
+                              <span className="text-xs font-bold text-accent">
+                                {format(dateRange.start, 'yyyy-MM-dd')} - {format(dateRange.end, 'yyyy-MM-dd')}
+                              </span>
+                              <button 
+                                onClick={() => setIsCustomDatePickerOpen(true)}
+                                className="p-1 hover:bg-border/50 rounded-lg text-secondary"
+                              >
+                                <Calendar className="h-4 w-4" />
+                              </button>
+                            </div>
+                          )}
                         </div>
                         <div className="flex space-x-2">
                           <button 
                             onClick={() => {
                               if (!org) return;
-                              const doc = generateStatementPDF(student, studentInvoices, org, dateRange);
+                              const doc = generateStatementPDF(student, filteredInvoicesForStatement, filteredReceiptsForStatement, org, dateRange);
                               doc.save(`Statement_${student.studentName}.pdf`);
                             }}
                             className="btn-secondary py-2 flex items-center space-x-2"
@@ -701,15 +959,14 @@ export function StudentProfileModal({ student, isOpen, onClose, onEdit }: Studen
                           </button>
                           <button 
                             onClick={() => {
-                              const totalOutstanding = studentInvoices.reduce((sum, inv) => sum + inv.balanceDue, 0);
-                              const unpaidCount = studentInvoices.filter(inv => inv.status !== 'PAID').length;
+                              const totalOutstanding = filteredInvoicesForStatement.reduce((sum, inv) => sum + inv.balanceDue, 0);
+                              const unpaidCount = filteredInvoicesForStatement.filter(inv => inv.status !== 'PAID').length;
                               const message = `Dear ${student.fatherName}, Please find attached account statement for ${student.studentName}. Total outstanding: ₹${totalOutstanding} (${unpaidCount} months unpaid). Kindly clear dues at earliest. - Jagriti Tours & Travels`;
                               const encodedMessage = encodeURIComponent(message);
                               const whatsappUrl = `https://web.whatsapp.com/send?phone=91${student.phoneNumber}&text=${encodedMessage}`;
                               window.open(whatsappUrl, '_blank');
-                              alert('Statement PDF generated. Please download it and attach it to the WhatsApp message.');
                               if (org) {
-                                const doc = generateStatementPDF(student, studentInvoices, org, dateRange);
+                                const doc = generateStatementPDF(student, filteredInvoicesForStatement, filteredReceiptsForStatement, org, dateRange);
                                 doc.save(`Statement_${student.studentName}.pdf`);
                               }
                             }}
@@ -734,33 +991,41 @@ export function StudentProfileModal({ student, isOpen, onClose, onEdit }: Studen
                             </tr>
                           </thead>
                           <tbody>
-                            {studentInvoices.map(inv => (
-                              <tr key={inv.id}>
-                                <td className="font-bold text-primary">{inv.invoiceNumber}</td>
-                                <td className="text-xs text-secondary">{inv.month}</td>
-                                <td className="font-bold text-primary">{formatCurrency(inv.totalAmount)}</td>
-                                <td className="text-success">{formatCurrency(inv.paidAmount)}</td>
-                                <td className="text-danger font-bold">{formatCurrency(inv.balanceDue)}</td>
-                                <td>
-                                  <span className={cn(
-                                    "badge text-[10px]",
-                                    inv.status === 'PAID' ? "bg-success/10 text-success" :
-                                    inv.status === 'OVERDUE' ? "bg-danger/10 text-danger" : "bg-accent/10 text-accent"
-                                  )}>
-                                    {inv.status}
-                                  </span>
+                            {filteredInvoicesForStatement.length === 0 ? (
+                              <tr>
+                                <td colSpan={6} className="text-center py-8 text-secondary font-medium italic">
+                                  No invoices found for the selected period
                                 </td>
                               </tr>
-                            ))}
+                            ) : (
+                              filteredInvoicesForStatement.map(inv => (
+                                <tr key={inv.id}>
+                                  <td className="font-bold text-primary">{inv.invoiceNumber}</td>
+                                  <td className="text-xs text-secondary">{inv.month}</td>
+                                  <td className="font-bold text-primary">{formatCurrency(inv.totalAmount)}</td>
+                                  <td className="text-success">{formatCurrency(inv.paidAmount)}</td>
+                                  <td className="text-danger font-bold">{formatCurrency(inv.balanceDue)}</td>
+                                  <td>
+                                    <span className={cn(
+                                      "badge text-[10px]",
+                                      inv.status === 'PAID' ? "bg-success/10 text-success" :
+                                      inv.status === 'OVERDUE' ? "bg-danger/10 text-danger" : "bg-accent/10 text-accent"
+                                    )}>
+                                      {inv.status}
+                                    </span>
+                                  </td>
+                                </tr>
+                              ))
+                            )}
                           </tbody>
                         </table>
                       </div>
 
                       <div className="card bg-accent/5 border-accent/10 p-6 flex flex-col md:flex-row md:items-center justify-between gap-4">
                         <div>
-                          <p className="text-[10px] font-bold text-accent uppercase tracking-widest">Total Outstanding</p>
+                          <p className="text-[10px] font-bold text-accent uppercase tracking-widest">Total Outstanding (Period)</p>
                           <p className="text-3xl font-black text-primary font-mono">
-                            {formatCurrency(studentInvoices.reduce((sum, inv) => sum + inv.balanceDue, 0))}
+                            {formatCurrency(filteredInvoicesForStatement.reduce((sum, inv) => sum + inv.balanceDue, 0))}
                           </p>
                         </div>
                         <div className="text-right">
@@ -807,8 +1072,105 @@ export function StudentProfileModal({ student, isOpen, onClose, onEdit }: Studen
               </div>
             </div>
           </div>
-        </motion.div>
-      </div>
-    </AnimatePresence>
-  );
+        {/* Raise Invoice Modal */}
+        <RaiseSingleInvoiceModal
+          isOpen={isRaiseInvoiceModalOpen}
+          onClose={() => setIsRaiseInvoiceModalOpen(false)}
+          student={student}
+          profile={profile}
+        />
+
+        {/* Record Payment Modal */}
+        {selectedInvoiceForPayment && (
+          <RecordPaymentModal
+            isOpen={isRecordPaymentModalOpen}
+            onClose={() => {
+              setIsRecordPaymentModalOpen(false);
+              setSelectedInvoiceForPayment(null);
+            }}
+            invoice={selectedInvoiceForPayment}
+            profile={profile}
+          />
+        )}
+
+        {/* Invoice View Modal */}
+        {selectedInvoiceForView && (
+          <InvoiceViewModal
+            isOpen={isInvoiceViewModalOpen}
+            onClose={() => {
+              setIsInvoiceViewModalOpen(false);
+              setSelectedInvoiceForView(null);
+            }}
+            invoice={selectedInvoiceForView}
+            org={org}
+            onEdit={() => {
+              setIsInvoiceViewModalOpen(false);
+              if (selectedInvoiceForView.status === 'PAID') {
+                if (confirm('⚠️ This invoice is already marked as PAID. Editing it may affect the balance calculations. Are you sure you want to edit?')) {
+                  setSelectedInvoiceForEdit(selectedInvoiceForView);
+                  setIsEditModalOpen(true);
+                }
+              } else {
+                setSelectedInvoiceForEdit(selectedInvoiceForView);
+                setIsEditModalOpen(true);
+              }
+            }}
+            onRecordPayment={() => {
+              setIsInvoiceViewModalOpen(false);
+              setSelectedInvoiceForPayment(selectedInvoiceForView);
+              setIsRecordPaymentModalOpen(true);
+            }}
+            onDownload={() => handleDownloadPDF('invoice', selectedInvoiceForView)}
+            onWhatsApp={() => handleWhatsApp('invoice', selectedInvoiceForView)}
+            onDelete={() => {
+              if (confirm(`Are you sure you want to delete invoice ${selectedInvoiceForView.invoiceNumber}? This will also revert the student's balance.`)) {
+                handleDeleteInvoice(selectedInvoiceForView);
+                setIsInvoiceViewModalOpen(false);
+              }
+            }}
+          />
+        )}
+
+        {/* Edit Invoice Modal */}
+        {selectedInvoiceForEdit && (
+          <EditInvoiceModal
+            isOpen={isEditModalOpen}
+            onClose={() => {
+              setIsEditModalOpen(false);
+              setSelectedInvoiceForEdit(null);
+            }}
+            invoice={selectedInvoiceForEdit}
+            profile={profile}
+          />
+        )}
+
+        {/* Receipt Detail Modal */}
+        {selectedReceiptForView && (
+          <ReceiptDetailModal
+            isOpen={isReceiptDetailModalOpen}
+            onClose={() => {
+              setIsReceiptDetailModalOpen(false);
+              setSelectedReceiptForView(null);
+            }}
+            receipt={selectedReceiptForView}
+            invoice={studentInvoices.find(inv => inv.id === selectedReceiptForView.invoiceId)}
+            profile={profile}
+            onDownload={() => handleDownloadPDF('receipt', selectedReceiptForView)}
+            onWhatsApp={() => handleWhatsApp('receipt', selectedReceiptForView)}
+          />
+        )}
+
+        <CustomDateRangePicker 
+          isOpen={isCustomDatePickerOpen}
+          onClose={() => setIsCustomDatePickerOpen(false)}
+          initialRange={dateRange}
+          onApply={(range) => {
+            setDateRange(range);
+            setFilterType('Custom');
+          }}
+        />
+      </motion.div>
+    </div>
+  </AnimatePresence>
+);
 }

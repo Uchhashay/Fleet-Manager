@@ -1,10 +1,19 @@
-export type UserRole = 'admin' | 'accountant' | 'driver' | 'helper';
+export type UserRole = 'admin' | 'accountant' | 'driver' | 'helper' | 'developer';
+
+export interface UserPermissions {
+  payroll: { view: boolean; edit: boolean };
+  cashbook: { view: boolean; edit: boolean };
+  fleet: { view: boolean; edit: boolean };
+  fees: { view: boolean; edit: boolean };
+  settings: { view: boolean; edit: boolean };
+}
 
 export interface Profile {
   id: string;
   email: string;
   role: UserRole;
   full_name: string;
+  permissions?: UserPermissions;
 }
 
 export interface Bus {
@@ -254,6 +263,8 @@ export interface Receipt {
   receivedBy: string;
   amountReceived: number;
   amountInWords: string;
+  linkedInvoices?: { invoiceId: string; invoiceNumber: string; amountApplied: number; month: string; status: string }[];
+  description?: string;
   notes?: string;
   createdAt: any;
 }

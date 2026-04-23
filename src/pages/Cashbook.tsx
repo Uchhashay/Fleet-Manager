@@ -51,7 +51,7 @@ export function Cashbook() {
   const [staff, setStaff] = useState<Staff[]>([]);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
-  const [viewMode, setViewMode] = useState<'accountant' | 'owner'>(profile?.role === 'admin' ? 'owner' : 'accountant');
+  const [viewMode, setViewMode] = useState<'accountant' | 'owner'>((profile?.role === 'admin' || profile?.role === 'developer') ? 'owner' : 'accountant');
   const [activeForm, setActiveForm] = useState<'in' | 'out' | null>(null);
   const [filters, setFilters] = useState({
     startDate: format(startOfMonth(new Date()), 'yyyy-MM-dd'),
@@ -70,10 +70,10 @@ export function Cashbook() {
 
   useEffect(() => {
     if (profile?.role) {
-      setViewMode(profile.role === 'admin' ? 'owner' : 'accountant');
+      setViewMode((profile.role === 'admin' || profile.role === 'developer') ? 'owner' : 'accountant');
       setFormData(prev => ({
         ...prev,
-        paid_by: profile.role === 'admin' ? 'owner' : 'accountant'
+        paid_by: (profile.role === 'admin' || profile.role === 'developer') ? 'owner' : 'accountant'
       }));
     }
   }, [profile?.role]);
@@ -91,7 +91,7 @@ export function Cashbook() {
         ...prev,
         type: state.action!,
         category: state.action === 'in' ? 'owner_transfer' : 'salary',
-        paid_by: profile?.role === 'admin' ? 'owner' : 'accountant'
+        paid_by: (profile?.role === 'admin' || profile?.role === 'developer') ? 'owner' : 'accountant'
       }));
     }
   }, [location.state, profile?.role]);
@@ -375,7 +375,7 @@ export function Cashbook() {
         description: '',
         date: format(new Date(), 'yyyy-MM-dd'),
         staff_id: '',
-        paid_by: profile?.role === 'admin' ? 'owner' : 'accountant'
+        paid_by: (profile?.role === 'admin' || profile?.role === 'developer') ? 'owner' : 'accountant'
       });
       fetchLedger();
     } catch (error) {
@@ -532,13 +532,13 @@ export function Cashbook() {
       )}
 
       {/* Quick Action Buttons */}
-      {(profile?.role === 'admin' || profile?.role === 'accountant') && (
+      {(profile?.role === 'admin' || profile?.role === 'accountant' || profile?.role === 'developer') && (
         <div className="grid gap-6 sm:grid-cols-2">
           <motion.button
             whileHover={{ y: -4, scale: 1.01 }}
             whileTap={{ scale: 0.98 }}
             onClick={() => {
-              if (profile?.role === 'admin' && viewMode === 'accountant') {
+              if ((profile?.role === 'admin' || profile?.role === 'developer') && viewMode === 'accountant') {
                 setMessage({ type: 'info', text: 'Please toggle to "Owner" mode to record cash entries.' });
                 setTimeout(() => setMessage(null), 5000);
                 return;
@@ -547,7 +547,7 @@ export function Cashbook() {
                 ...formData, 
                 type: 'in', 
                 category: 'owner_transfer', 
-                paid_by: profile?.role === 'admin' ? 'owner' : 'accountant' 
+                paid_by: (profile?.role === 'admin' || profile?.role === 'developer') ? 'owner' : 'accountant' 
               });
               setActiveForm(activeForm === 'in' ? null : 'in');
             }}
@@ -586,7 +586,7 @@ export function Cashbook() {
             whileHover={{ y: -4, scale: 1.01 }}
             whileTap={{ scale: 0.98 }}
             onClick={() => {
-              if (profile?.role === 'admin' && viewMode === 'accountant') {
+              if ((profile?.role === 'admin' || profile?.role === 'developer') && viewMode === 'accountant') {
                 setMessage({ type: 'info', text: 'Please toggle to "Owner" mode to record cash entries.' });
                 setTimeout(() => setMessage(null), 5000);
                 return;
@@ -595,7 +595,7 @@ export function Cashbook() {
                 ...formData, 
                 type: 'out', 
                 category: 'salary', 
-                paid_by: profile?.role === 'admin' ? 'owner' : 'accountant' 
+                paid_by: (profile?.role === 'admin' || profile?.role === 'developer') ? 'owner' : 'accountant' 
               });
               setActiveForm(activeForm === 'out' ? null : 'out');
             }}

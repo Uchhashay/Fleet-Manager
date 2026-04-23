@@ -632,7 +632,7 @@ export function SalaryManager() {
                                 <th className="px-4 py-3 text-[9px] font-bold text-secondary uppercase tracking-widest">Paid By</th>
                                 <th className="px-4 py-3 text-[9px] font-bold text-secondary uppercase tracking-widest">Description</th>
                                 <th className="px-4 py-3 text-[9px] font-bold text-secondary uppercase tracking-widest text-right">Amount</th>
-                                {profile?.role === 'admin' && <th className="px-4 py-3 text-[9px] font-bold text-secondary uppercase tracking-widest text-right">Actions</th>}
+                                { (profile?.role === 'admin' || profile?.role === 'developer') && <th className="px-4 py-3 text-[9px] font-bold text-secondary uppercase tracking-widest text-right">Actions</th>}
                               </tr>
                             </thead>
                             <tbody className="divide-y divide-border">
@@ -701,7 +701,7 @@ export function SalaryManager() {
                                   )}>
                                     {item.isPayment ? '-' : ''}{formatCurrency(item.amount)}
                                   </td>
-                                  {profile?.role === 'admin' && (
+                                  { (profile?.role === 'admin' || profile?.role === 'developer') && (
                                     <td className="px-4 py-3 text-right">
                                       {item.isPayment && !(item as any).isOpening && (
                                         <button

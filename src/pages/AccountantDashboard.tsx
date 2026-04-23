@@ -54,7 +54,7 @@ export function AccountantDashboard() {
   const [staffBalances, setStaffBalances] = useState<Record<string, number>>({});
 
   useEffect(() => {
-    if (profile?.role === 'admin') {
+    if (profile?.role === 'admin' || profile?.role === 'developer') {
       // Listen to profiles
       const qProfiles = query(collection(db, 'profiles'), where('role', '==', 'accountant'));
       const unsubscribeProfiles = onSnapshot(qProfiles, async (snap) => {
@@ -88,7 +88,7 @@ export function AccountantDashboard() {
             collection(db, 'cash_transactions'),
             where('created_by', '==', acc.id)
           ));
-          let bal = (acc.role === 'admin' || acc.id === auth.currentUser?.uid) ? (openingBalances.owner || 0) : (openingBalances.accountant || 0);
+          let bal = (acc.role === 'admin' || acc.role === 'developer' || acc.id === auth.currentUser?.uid) ? (openingBalances.owner || 0) : (openingBalances.accountant || 0);
           cashSnap.docs.forEach(doc => {
             const t = doc.data();
             const paidBy = t.paid_by || 'accountant';
@@ -226,7 +226,7 @@ export function AccountantDashboard() {
         const paidBy = t.paid_by || 'accountant'; // Default to accountant for legacy
 
         // Determine if this transaction belongs to the current view's ledger
-        const isTargetLedger = (profile?.role === 'admin' && selectedAccountantId === auth.currentUser?.uid) 
+        const isTargetLedger = ((profile?.role === 'admin' || profile?.role === 'developer') && selectedAccountantId === auth.currentUser?.uid) 
           ? paidBy === 'owner' 
           : paidBy === 'accountant';
 
@@ -251,7 +251,7 @@ export function AccountantDashboard() {
         }
       });
 
-      const currentBalance = (profile?.role === 'admin' && selectedAccountantId === auth.currentUser?.uid) 
+      const currentBalance = ((profile?.role === 'admin' || profile?.role === 'developer') && selectedAccountantId === auth.currentUser?.uid) 
         ? ownerCash 
         : accountantCash;
 
@@ -314,7 +314,7 @@ export function AccountantDashboard() {
           <h1 className="text-3xl font-bold tracking-tight text-primary">Accountant Dashboard</h1>
           
           <div className="flex items-center space-x-4">
-            {profile?.role === 'admin' && (
+            {(profile?.role === 'admin' || profile?.role === 'developer') && (
               <div className="flex items-center space-x-2 bg-surface border border-border rounded-xl px-3 py-1.5 shadow-sm">
                 <span className="text-[10px] font-bold uppercase tracking-widest text-secondary">View As:</span>
                 <select 
@@ -336,7 +336,7 @@ export function AccountantDashboard() {
         </div>
       </header>
 
-      {profile?.role === 'admin' && (
+      {(profile?.role === 'admin' || profile?.role === 'developer') && (
         <div className="space-y-6">
           <div className="flex items-center space-x-2">
             <Users className="h-4 w-4 text-secondary" />

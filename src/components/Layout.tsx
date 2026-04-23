@@ -70,30 +70,30 @@ export function Layout() {
       label: 'Dashboard', 
       path: '/', 
       icon: LayoutDashboard, 
-      roles: ['admin', 'accountant', 'driver', 'helper'] 
+      roles: ['admin', 'accountant', 'driver', 'helper', 'developer'] 
     },
     { 
       label: 'Entry', 
       path: '/entry', 
       icon: PlusCircle, 
-      roles: ['admin', 'accountant'] 
+      roles: ['admin', 'accountant', 'developer'] 
     },
     { 
       label: 'Expenses', 
       path: '/expenses', 
       icon: DollarSign, 
-      roles: ['admin', 'accountant'] 
+      roles: ['admin', 'accountant', 'developer'] 
     },
     { 
       label: 'Cash Book', 
       path: '/cashbook', 
       icon: Wallet, 
-      roles: ['admin', 'accountant'] 
+      roles: ['admin', 'accountant', 'developer'] 
     },
     { 
       label: 'Fees', 
       icon: GraduationCap, 
-      roles: ['admin', 'accountant'],
+      roles: ['admin', 'accountant', 'developer'],
       children: [
         { label: 'Fee Collection', path: '/fees/collection', icon: GraduationCap },
         { label: 'Student Database', path: '/fees/students', icon: Database },
@@ -105,49 +105,49 @@ export function Layout() {
       label: 'Monthly', 
       path: '/monthly', 
       icon: Calendar, 
-      roles: ['admin', 'accountant'] 
+      roles: ['admin', 'accountant', 'developer'] 
     },
     { 
       label: 'Reports', 
       path: '/reports', 
       icon: BarChart3, 
-      roles: ['admin', 'accountant'] 
+      roles: ['admin', 'accountant', 'developer'] 
     },
     { 
       label: 'Staff', 
       path: '/staff', 
       icon: Users, 
-      roles: ['admin', 'accountant'] 
+      roles: ['admin', 'accountant', 'developer'] 
     },
     { 
       label: 'Salaries', 
       path: '/salaries', 
       icon: IndianRupee, 
-      roles: ['admin', 'accountant'] 
+      roles: ['admin', 'accountant', 'developer'] 
     },
     { 
       label: 'Buses', 
       path: '/buses', 
       icon: BusIcon, 
-      roles: ['admin'] 
+      roles: ['admin', 'developer'] 
     },
     { 
-      label: 'Cleanup', 
-      path: '/cleanup', 
-      icon: Trash2, 
-      roles: ['admin'] 
+      label: 'Dev Tools', 
+      path: '/dev-tools', 
+      icon: Database, 
+      roles: ['admin', 'developer'] 
     },
     { 
       label: 'Users', 
       path: '/users', 
       icon: UserCircle, 
-      roles: ['admin'] 
+      roles: ['admin', 'developer'] 
     },
     { 
       label: 'Settings', 
       path: '/settings', 
       icon: Settings, 
-      roles: ['admin'] 
+      roles: ['admin', 'developer'] 
     },
   ];
 

@@ -28,6 +28,7 @@ import {
   X, 
   Save, 
   FileText, 
+  Edit2,
   CheckCircle2, 
   SkipForward,
   Download,
@@ -41,10 +42,16 @@ import {
   ArrowRight,
   Eye,
   CreditCard,
+  Trash2,
   Users,
   School as SchoolIcon,
   Route as RouteIcon
 } from 'lucide-react';
+import { RaiseSingleInvoiceModal } from '../components/RaiseSingleInvoiceModal';
+import { RecordPaymentModal } from '../components/RecordPaymentModal';
+import { InvoiceViewModal } from '../components/InvoiceViewModal';
+import { ReceiptDetailModal } from '../components/ReceiptDetailModal';
+import { EditInvoiceModal } from '../components/EditInvoiceModal';
 import { motion, AnimatePresence } from 'framer-motion';
 import { format, startOfMonth, endOfMonth, isAfter, isBefore, addDays, parse, isValid } from 'date-fns';
 import { generateInvoicePDF, generateReceiptPDF } from '../lib/pdf-service';
@@ -82,7 +89,7 @@ export function InvoiceReceipt() {
   const [selectedReceiptForView, setSelectedReceiptForView] = useState<Receipt | null>(null);
 
   useEffect(() => {
-    if (!profile || (profile.role !== 'admin' && profile.role !== 'accountant')) return;
+    if (!profile || (profile.role !== 'admin' && profile.role !== 'accountant' && profile.role !== 'developer')) return;
 
     const unsubInvoices = onSnapshot(
       query(collection(db, 'invoices'), orderBy('createdAt', 'desc')), 
@@ -136,7 +143,7 @@ export function InvoiceReceipt() {
 
   // Handle Overdue Status Updates
   useEffect(() => {
-    if (!invoices.length || !profile || profile.role !== 'admin') return;
+    if (!invoices.length || !profile || (profile.role !== 'admin' && profile.role !== 'developer')) return;
 
     const updateOverdue = async () => {
       const today = new Date();
@@ -279,7 +286,8 @@ export function InvoiceReceipt() {
     if (type === 'invoice') {
       message = `Dear ${item.fatherName}, Please find attached invoice [${item.invoiceNumber}] for [${item.month}] transport fees of ₹${item.totalAmount} for ${item.studentName}. Due Date: ${format(item.dueDate.toDate(), 'dd MMM yyyy')}. Thank you. - Jagriti Tours & Travels`;
     } else {
-      message = `Dear ${item.fatherName}, Payment of ₹${item.amountReceived} received for ${item.studentName} against invoice [${item.invoiceNumber}]. Receipt No: [${item.receiptNumber}]. Thank you. - Jagriti Tours & Travels`;
+      const desc = item.description || `invoice [${item.invoiceNumber}]`;
+      message = `Dear ${item.fatherName}, Payment of ₹${item.amountReceived} received for ${item.studentName} against ${desc}. Receipt No: [${item.receiptNumber}]. Thank you. - Jagriti Tours & Travels`;
     }
     
     const encodedMessage = encodeURIComponent(message);
@@ -297,7 +305,7 @@ export function InvoiceReceipt() {
           <h2 className="text-3xl font-black text-primary tracking-tight">Invoice & Receipt</h2>
           <p className="text-secondary font-medium">Manage billing and collections</p>
         </div>
-        {activeTab === 'invoices' && profile?.role === 'admin' && (
+        {activeTab === 'invoices' && (profile?.role === 'admin' || profile?.role === 'developer') && (
           <button
             onClick={() => setIsRaiseModalOpen(true)}
             className="btn-primary flex items-center justify-center space-x-2 shadow-lg shadow-accent/20"
@@ -354,15 +362,24 @@ export function InvoiceReceipt() {
         <div className="p-6 space-y-6">
           {/* Filters */}
           <div className="flex flex-col lg:flex-row gap-4">
-            <div className="relative flex-1">
-              <Search className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-secondary" />
-              <input
-                type="text"
-                placeholder={`Search ${activeTab}...`}
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="input pl-10 w-full bg-background border-border/50"
-              />
+            <div className="flex-1 flex gap-2">
+              <div className="relative flex-1">
+                <Search className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-secondary" />
+                <input
+                  type="text"
+                  placeholder={`Search student name or ${activeTab === 'invoices' ? 'invoice' : 'receipt'} number...`}
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  className="input pl-10 w-full bg-background border-border/50 focus:border-accent/50 transition-all"
+                />
+              </div>
+              <button 
+                className="btn-secondary px-4 flex items-center space-x-2"
+                onClick={() => {/* Search is already handled by state update, but button provides visual feedback */}}
+              >
+                <Search className="h-4 w-4" />
+                <span className="hidden sm:inline">Search</span>
+              </button>
             </div>
             <div className="flex flex-wrap gap-3">
               {activeTab === 'invoices' && (
@@ -727,9 +744,19 @@ function RaiseInvoicesModal({ isOpen, onClose, students, profile }: { isOpen: bo
   const [selectedMonth, setSelectedMonth] = useState(format(new Date(), 'MMMM yyyy'));
   const [selectedStudents, setSelectedStudents] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
+  const [showConfirm, setShowConfirm] = useState(false);
+  const [skippedStudentsInfo, setSkippedStudentsInfo] = useState<{ count: number, names: string, finalIds: string[] } | null>(null);
   const [filterSchool, setFilterSchool] = useState('all');
   const [filterStand, setFilterStand] = useState('all');
   const [searchTerm, setSearchTerm] = useState('');
+  const [batchDescription, setBatchDescription] = useState('');
+  const [batchTerms, setBatchTerms] = useState('Due on Receipt');
+  
+  // Individual customizations: studentId -> { description, terms, schoolName, feeAmount, concession }
+  const [customizations, setCustomizations] = useState<Record<string, { description?: string, terms?: string, schoolName?: string, feeAmount?: number, concession?: number }>>({});
+  const [editingCustomizationId, setEditingCustomizationId] = useState<string | null>(null);
 
   // Filter eligible students
   const [eligibleStudents, setEligibleStudents] = useState<Student[]>([]);
@@ -775,25 +802,42 @@ function RaiseInvoicesModal({ isOpen, onClose, students, profile }: { isOpen: bo
     setSelectedStudents(eligibleStudents.map(s => s.id));
   }, [eligibleStudents]);
 
-  const handleRaise = async () => {
+  const handleRaise = async (forceRaiseIds?: string[]) => {
     if (!profile) return;
     setLoading(true);
+    setError(null);
     try {
       const batch = writeBatch(db);
       const invoiceDate = serverTimestamp();
       const dueDate = Timestamp.fromDate(endOfMonth(new Date()));
       
-      // Check if invoices already exist for this month to prevent duplicates
-      const existingInvoicesSnap = await getDocs(query(
-        collection(db, 'invoices'),
-        where('month', '==', selectedMonth)
-      ));
-      const existingStudentIds = new Set(existingInvoicesSnap.docs.map(d => d.data().studentId));
-      
-      const finalSelectedStudents = selectedStudents.filter(id => !existingStudentIds.has(id));
+      let finalSelectedStudents: string[] = [];
+
+      if (forceRaiseIds) {
+        finalSelectedStudents = forceRaiseIds;
+        setShowConfirm(false);
+      } else {
+        // Check if invoices already exist for this month to prevent duplicates
+        const existingInvoicesSnap = await getDocs(query(
+          collection(db, 'invoices'),
+          where('month', '==', selectedMonth)
+        ));
+        const existingStudentIds = new Set(existingInvoicesSnap.docs.map(d => d.data().studentId));
+        
+        const skippedStudents = selectedStudents.filter(id => existingStudentIds.has(id));
+        finalSelectedStudents = selectedStudents.filter(id => !existingStudentIds.has(id));
+
+        if (skippedStudents.length > 0) {
+          const skippedNames = skippedStudents.map(id => students.find(s => s.id === id)?.studentName).filter(Boolean).join(', ');
+          setSkippedStudentsInfo({ count: skippedStudents.length, names: skippedNames, finalIds: finalSelectedStudents });
+          setShowConfirm(true);
+          setLoading(false);
+          return;
+        }
+      }
 
       if (finalSelectedStudents.length === 0) {
-        alert('All selected students already have invoices for this month.');
+        setError('All selected students already have invoices for this month.');
         setLoading(false);
         return;
       }
@@ -818,31 +862,34 @@ function RaiseInvoicesModal({ isOpen, onClose, students, profile }: { isOpen: bo
         const student = students.find(s => s.id === finalSelectedStudents[i])!;
         if (!student) continue;
 
+        const cust = customizations[student.id] || {};
         const invoiceNumber = `JTT-${(lastNum + i + 1).toString().padStart(6, '0')}`;
-        const totalAmount = student.feeAmount - student.concession;
+        const currentFeeAmount = cust.feeAmount ?? student.feeAmount;
+        const currentConcession = cust.concession ?? student.concession;
+        const totalAmount = currentFeeAmount - currentConcession;
         
         const invoiceData = {
           invoiceNumber,
           studentId: student.id,
           studentName: student.studentName,
           fatherName: student.fatherName,
-          schoolName: student.schoolName,
+          schoolName: cust.schoolName || student.schoolName,
           standName: student.standName,
           address: student.address,
           phoneNumber: student.phoneNumber,
           invoiceDate,
           dueDate,
           month: selectedMonth,
-          feeAmount: student.feeAmount,
+          feeAmount: currentFeeAmount,
           profileConcession: student.concession,
-          invoiceConcession: 0,
-          concession: student.concession,
+          invoiceConcession: currentConcession - student.concession,
+          concession: currentConcession,
           totalAmount,
           paidAmount: 0,
           balanceDue: totalAmount,
           status: 'UNPAID',
-          itemDescription: `${student.schoolName} [${student.standName}] Transport Fees`,
-          terms: 'Due on Receipt',
+          itemDescription: cust.description || batchDescription || `${student.schoolName} [${student.standName}] Transport Fees`,
+          terms: cust.terms || batchTerms || 'Due on Receipt',
           createdBy: profile.full_name,
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp()
@@ -880,12 +927,14 @@ function RaiseInvoicesModal({ isOpen, onClose, students, profile }: { isOpen: bo
         await currentBatch.commit();
       }
 
-      alert(`Successfully raised ${invoicesRaised} invoices.`);
-      onClose();
+      setSuccess(`Successfully raised ${invoicesRaised} invoices.`);
+      setTimeout(() => {
+        onClose();
+      }, 2000);
     } catch (error) {
       console.error('Error raising invoices:', error);
+      setError('Failed to raise invoices. Please check console for details.');
       handleFirestoreError(error, OperationType.CREATE, 'invoices');
-      alert('Failed to raise invoices. Please check console for details.');
     } finally {
       setLoading(false);
     }
@@ -898,7 +947,7 @@ function RaiseInvoicesModal({ isOpen, onClose, students, profile }: { isOpen: bo
       <motion.div
         initial={{ opacity: 0, scale: 0.95 }}
         animate={{ opacity: 1, scale: 1 }}
-        className="bg-surface w-full max-w-4xl rounded-3xl shadow-2xl border border-border overflow-hidden flex flex-col max-h-[90vh]"
+        className="bg-surface w-full max-w-5xl rounded-3xl shadow-2xl border border-border overflow-hidden flex flex-col max-h-[95vh]"
       >
         <div className="p-6 border-b border-border flex items-center justify-between bg-accent/5">
           <div className="flex items-center space-x-3">
@@ -916,6 +965,77 @@ function RaiseInvoicesModal({ isOpen, onClose, students, profile }: { isOpen: bo
         </div>
 
         <div className="p-6 space-y-6 overflow-y-auto">
+          {error && (
+            <div className="p-4 bg-danger/10 border border-danger/20 rounded-2xl flex items-center space-x-3 text-danger font-bold">
+              <AlertCircle className="h-5 w-5" />
+              <span>{error}</span>
+            </div>
+          )}
+
+          {success && (
+            <div className="p-4 bg-success/10 border border-success/20 rounded-2xl flex items-center space-x-3 text-success font-bold">
+              <CheckCircle2 className="h-5 w-5" />
+              <span>{success}</span>
+            </div>
+          )}
+
+          {showConfirm && skippedStudentsInfo && (
+            <div className="p-6 bg-warning/10 border border-warning/20 rounded-3xl space-y-4">
+              <div className="flex items-center space-x-3 text-warning">
+                <AlertCircle className="h-6 w-6" />
+                <h4 className="text-lg font-black">Duplicate Invoices Detected</h4>
+              </div>
+              <p className="text-sm text-secondary font-medium leading-relaxed">
+                <strong>{skippedStudentsInfo.count}</strong> students already have invoices for <strong>{selectedMonth}</strong>:
+                <br />
+                <span className="text-xs opacity-75">{skippedStudentsInfo.names}</span>
+                <br /><br />
+                They will be skipped. Do you want to continue with the remaining <strong>{skippedStudentsInfo.finalIds.length}</strong> students?
+              </p>
+              <div className="flex space-x-3">
+                <button 
+                  onClick={() => {
+                    setShowConfirm(false);
+                    setSkippedStudentsInfo(null);
+                  }}
+                  className="flex-1 py-3 bg-surface border border-border rounded-xl font-bold hover:bg-border/50 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button 
+                  onClick={() => handleRaise(skippedStudentsInfo.finalIds)}
+                  className="flex-1 py-3 bg-warning text-white rounded-xl font-bold hover:bg-warning/90 transition-colors"
+                >
+                  Yes, Continue
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Batch Settings */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 bg-accent/5 p-4 rounded-2xl border border-accent/10">
+            <div className="space-y-2">
+              <label className="label">Default Batch Description</label>
+              <input
+                type="text"
+                value={batchDescription}
+                onChange={(e) => setBatchDescription(e.target.value)}
+                className="input w-full bg-background"
+                placeholder="e.g. School Transport Fees"
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="label">Default Batch Terms</label>
+              <input
+                type="text"
+                value={batchTerms}
+                onChange={(e) => setBatchTerms(e.target.value)}
+                className="input w-full bg-background"
+                placeholder="e.g. Due on Receipt"
+              />
+            </div>
+          </div>
+
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
             <div className="space-y-2">
               <label className="label">Select Month</label>
@@ -991,6 +1111,7 @@ function RaiseInvoicesModal({ isOpen, onClose, students, profile }: { isOpen: bo
                   <th>School</th>
                   <th>Stand</th>
                   <th>Fee Amount</th>
+                  <th className="text-right">Customize</th>
                 </tr>
               </thead>
               <tbody>
@@ -1006,10 +1127,25 @@ function RaiseInvoicesModal({ isOpen, onClose, students, profile }: { isOpen: bo
                         }}
                       />
                     </td>
-                    <td className="font-bold text-primary">{s.studentName}</td>
-                    <td className="text-xs text-secondary">{s.schoolName}</td>
+                    <td className="font-bold text-primary">
+                      {s.studentName}
+                      {customizations[s.id] && (
+                        <span className="ml-2 text-[10px] bg-warning/10 text-warning px-1.5 py-0.5 rounded-full uppercase tracking-tighter">Customized</span>
+                      )}
+                    </td>
+                    <td className="text-xs text-secondary">{customizations[s.id]?.schoolName || s.schoolName}</td>
                     <td className="text-xs text-secondary">{s.standName}</td>
-                    <td className="font-bold text-primary">{formatCurrency(s.feeAmount - s.concession)}</td>
+                    <td className="font-bold text-primary">
+                      {formatCurrency((customizations[s.id]?.feeAmount ?? s.feeAmount) - (customizations[s.id]?.concession ?? s.concession))}
+                    </td>
+                    <td className="text-right">
+                      <button 
+                        onClick={() => setEditingCustomizationId(s.id)}
+                        className="p-2 text-secondary hover:text-accent hover:bg-accent/10 rounded-lg transition-all"
+                      >
+                        <Edit2 className="h-4 w-4" />
+                      </button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -1024,7 +1160,7 @@ function RaiseInvoicesModal({ isOpen, onClose, students, profile }: { isOpen: bo
           <div className="flex space-x-3">
             <button onClick={onClose} className="btn-secondary">Cancel</button>
             <button 
-              onClick={handleRaise} 
+              onClick={() => handleRaise()} 
               disabled={loading || selectedStudents.length === 0}
               className="btn-primary flex items-center space-x-2"
             >
@@ -1033,671 +1169,97 @@ function RaiseInvoicesModal({ isOpen, onClose, students, profile }: { isOpen: bo
             </button>
           </div>
         </div>
-      </motion.div>
-    </div>
-  );
-}
 
-function RecordPaymentModal({ isOpen, onClose, invoice, profile }: { isOpen: boolean, onClose: () => void, invoice: Invoice, profile: any }) {
-  const [amount, setAmount] = useState(invoice.balanceDue);
-  const [date, setDate] = useState(format(new Date(), 'yyyy-MM-dd'));
-  const [mode, setMode] = useState<'Cash' | 'UPI' | 'Bank Transfer'>('Cash');
-  const [type, setType] = useState<'Sunday Doorstep' | 'Regular via Driver'>('Regular via Driver');
-  const [notes, setNotes] = useState('');
-  const [loading, setLoading] = useState(false);
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!profile) return;
-    setLoading(true);
-    try {
-      const batch = writeBatch(db);
-      
-      // Get last receipt number
-      const q = query(collection(db, 'receipts'), orderBy('receiptNumber', 'desc'), limit(1));
-      const snap = await getDocs(q);
-      let lastNum = 0;
-      if (!snap.empty) {
-        lastNum = parseInt(snap.docs[0].data().receiptNumber.split('-')[1]);
-      }
-      const receiptNumber = `RCP-${(lastNum + 1).toString().padStart(6, '0')}`;
-
-      const receiptData = {
-        receiptNumber,
-        invoiceId: invoice.id,
-        invoiceNumber: invoice.invoiceNumber,
-        studentId: invoice.studentId,
-        studentName: invoice.studentName,
-        fatherName: invoice.fatherName,
-        address: invoice.address,
-        phoneNumber: invoice.phoneNumber,
-        paymentDate: Timestamp.fromDate(new Date(date)),
-        paymentMode: mode,
-        feeType: type,
-        receivedBy: profile.full_name,
-        amountReceived: amount,
-        amountInWords: amountToWordsIndian(amount),
-        notes,
-        createdAt: serverTimestamp()
-      };
-
-      const rcpRef = doc(collection(db, 'receipts'));
-      batch.set(rcpRef, receiptData);
-
-      // Update invoice
-      const newPaidAmount = invoice.paidAmount + amount;
-      const newBalanceDue = invoice.totalAmount - newPaidAmount;
-      const newStatus = newBalanceDue === 0 ? 'PAID' : 'PARTIAL';
-      
-      batch.update(doc(db, 'invoices', invoice.id), {
-        paidAmount: newPaidAmount,
-        balanceDue: newBalanceDue,
-        status: newStatus,
-        updatedAt: serverTimestamp()
-      });
-
-      // Update student
-      batch.update(doc(db, 'students', invoice.studentId), {
-        totalBalance: increment(-amount)
-      });
-
-      // Add timeline
-      const timelineRef = doc(collection(db, 'students', invoice.studentId, 'timeline'));
-      batch.set(timelineRef, {
-        event: 'Payment Recorded',
-        description: `Payment of ₹${amount} received for ${invoice.month} (Receipt: ${receiptNumber})`,
-        createdBy: profile.full_name,
-        createdAt: serverTimestamp()
-      });
-
-      // Add to cash transactions if Cash
-      if (mode === 'Cash') {
-        const cashRef = doc(collection(db, 'cash_transactions'));
-        batch.set(cashRef, {
-          date: date,
-          type: 'in',
-          category: 'fee_collection',
-          amount: amount,
-          description: `Fee collection for ${invoice.schoolName}: ${invoice.studentName} (${invoice.month})`,
-          linked_id: invoice.id,
-          paid_by: profile.role === 'admin' ? 'owner' : 'accountant',
-          created_by: auth.currentUser?.uid,
-          created_at: serverTimestamp()
-        });
-      }
-
-      await batch.commit();
-      alert('Payment recorded successfully.');
-      onClose();
-    } catch (error) {
-      console.error('Error recording payment:', error);
-      handleFirestoreError(error, OperationType.WRITE, 'receipts');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  if (!isOpen) return null;
-
-  return (
-    <div className="fixed inset-0 z-[110] flex items-center justify-center bg-background/80 backdrop-blur-sm p-4">
-      <motion.div
-        initial={{ opacity: 0, scale: 0.95 }}
-        animate={{ opacity: 1, scale: 1 }}
-        className="bg-surface w-full max-w-lg rounded-3xl shadow-2xl border border-border overflow-hidden"
-      >
-        <div className="p-6 border-b border-border flex items-center justify-between bg-accent/5">
-          <div className="flex items-center space-x-3">
-            <div className="h-10 w-10 rounded-xl bg-success/10 flex items-center justify-center text-success">
-              <CreditCard className="h-5 w-5" />
-            </div>
-            <div>
-              <h3 className="text-xl font-black text-primary tracking-tight">Record Payment</h3>
-              <p className="text-[10px] text-secondary font-bold uppercase tracking-widest">Against Invoice {invoice.invoiceNumber}</p>
-            </div>
-          </div>
-          <button onClick={onClose} className="p-2 hover:bg-border/50 rounded-xl transition-colors">
-            <X className="h-5 w-5 text-secondary" />
-          </button>
-        </div>
-
-        <form onSubmit={handleSubmit} className="p-6 space-y-4">
-          <div className="bg-accent/5 p-4 rounded-2xl border border-accent/10 space-y-1">
-            <p className="text-[10px] font-bold text-secondary uppercase tracking-widest">Student Name</p>
-            <p className="text-lg font-black text-primary">{invoice.studentName}</p>
-            <p className="text-xs text-secondary">Outstanding for {invoice.month}: <span className="font-bold text-danger">{formatCurrency(invoice.balanceDue)}</span></p>
-          </div>
-
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <label className="label">Amount to Pay (₹)</label>
-              <input
-                required
-                type="number"
-                max={invoice.balanceDue}
-                value={amount}
-                onChange={(e) => setAmount(Number(e.target.value))}
-                className="input w-full bg-background font-mono"
-              />
-            </div>
-            <div className="space-y-2">
-              <label className="label">Payment Date</label>
-              <input
-                required
-                type="date"
-                value={date}
-                onChange={(e) => setDate(e.target.value)}
-                className="input w-full bg-background"
-              />
-            </div>
-          </div>
-
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <label className="label">Payment Mode</label>
-              <select
-                value={mode}
-                onChange={(e) => setMode(e.target.value as any)}
-                className="input w-full bg-background"
-              >
-                <option value="Cash">Cash</option>
-                <option value="UPI">UPI</option>
-                <option value="Bank Transfer">Bank Transfer</option>
-              </select>
-            </div>
-            <div className="space-y-2">
-              <label className="label">Fee Type</label>
-              <select
-                value={type}
-                onChange={(e) => setType(e.target.value as any)}
-                className="input w-full bg-background"
-              >
-                <option value="Regular via Driver">Regular via Driver</option>
-                <option value="Sunday Doorstep">Sunday Doorstep</option>
-              </select>
-            </div>
-          </div>
-
-          <div className="space-y-2">
-            <label className="label">Internal Notes</label>
-            <textarea
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              className="input w-full bg-background min-h-[80px] resize-none"
-              placeholder="Internal only notes..."
-            />
-          </div>
-
-          <div className="flex items-center justify-end space-x-3 pt-4">
-            <button type="button" onClick={onClose} className="btn-secondary">Cancel</button>
-            <button 
-              type="submit" 
-              disabled={loading || amount <= 0}
-              className="btn-primary flex-1 flex items-center justify-center space-x-2"
+        {/* Individual Customization Modal */}
+        {editingCustomizationId && (
+          <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              className="bg-surface w-full max-w-md rounded-3xl shadow-2xl border border-border overflow-hidden"
             >
-              {loading ? <div className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" /> : <CheckCircle2 className="h-4 w-4" />}
-              <span>Record Payment</span>
-            </button>
-          </div>
-        </form>
-      </motion.div>
-    </div>
-  );
-}
-
-function EditInvoiceModal({ isOpen, onClose, invoice, profile }: { isOpen: boolean, onClose: () => void, invoice: Invoice, profile: any }) {
-  const [invoiceDate, setInvoiceDate] = useState(format(invoice.invoiceDate.toDate ? invoice.invoiceDate.toDate() : new Date(invoice.invoiceDate), 'yyyy-MM-dd'));
-  const [dueDate, setDueDate] = useState(format(invoice.dueDate.toDate ? invoice.dueDate.toDate() : new Date(invoice.dueDate), 'yyyy-MM-dd'));
-  const [itemDescription, setItemDescription] = useState(invoice.itemDescription || `${invoice.schoolName} [${invoice.standName}] Transport Fees`);
-  const [feeAmount, setFeeAmount] = useState(invoice.feeAmount);
-  const [invoiceConcession, setInvoiceConcession] = useState(invoice.invoiceConcession || 0);
-  const [notes, setNotes] = useState(invoice.notes || '');
-  const [terms, setTerms] = useState(invoice.terms || 'Due on Receipt');
-  const [loading, setLoading] = useState(false);
-
-  const profileConcession = invoice.profileConcession || 0;
-  const totalConcession = profileConcession + invoiceConcession;
-  const totalAmount = feeAmount - totalConcession;
-  const balanceDue = totalAmount - invoice.paidAmount;
-
-  const handleSave = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoading(true);
-    try {
-      const batch = writeBatch(db);
-      const invoiceRef = doc(db, 'invoices', invoice.id);
-      
-      let newStatus = invoice.status;
-      if (balanceDue <= 0) {
-        newStatus = 'PAID';
-      } else if (invoice.paidAmount > 0) {
-        newStatus = 'PARTIAL';
-      } else {
-        newStatus = 'UNPAID';
-      }
-
-      const historyEntry = {
-        editedBy: auth.currentUser?.uid || '',
-        userName: profile.full_name,
-        editedAt: new Date()
-      };
-
-      const updatedData = {
-        invoiceDate: Timestamp.fromDate(new Date(invoiceDate)),
-        dueDate: Timestamp.fromDate(new Date(dueDate)),
-        itemDescription,
-        feeAmount,
-        invoiceConcession,
-        concession: totalConcession,
-        totalAmount,
-        balanceDue,
-        status: newStatus,
-        notes,
-        terms,
-        editHistory: [...(invoice.editHistory || []), historyEntry],
-        updatedAt: serverTimestamp()
-      };
-
-      batch.update(invoiceRef, updatedData);
-
-      // Update student balance
-      const balanceDiff = totalAmount - invoice.totalAmount;
-      if (balanceDiff !== 0) {
-        batch.update(doc(db, 'students', invoice.studentId), {
-          totalBalance: increment(balanceDiff)
-        });
-      }
-
-      // Timeline event
-      const timelineRef = doc(collection(db, 'students', invoice.studentId, 'timeline'));
-      batch.set(timelineRef, {
-        event: 'Invoice Edited',
-        description: `Invoice ${invoice.invoiceNumber} was edited by ${profile.full_name}`,
-        createdBy: profile.full_name,
-        createdAt: serverTimestamp()
-      });
-
-      await batch.commit();
-      alert('Invoice updated successfully.');
-      onClose();
-    } catch (error) {
-      console.error('Error updating invoice:', error);
-      handleFirestoreError(error, OperationType.UPDATE, `invoices/${invoice.id}`);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  if (!isOpen) return null;
-
-  return (
-    <div className="fixed inset-0 z-[110] flex items-center justify-center bg-background/80 backdrop-blur-sm p-4">
-      <motion.div
-        initial={{ opacity: 0, scale: 0.95 }}
-        animate={{ opacity: 1, scale: 1 }}
-        className="bg-surface w-full max-w-2xl rounded-3xl shadow-2xl border border-border overflow-hidden"
-      >
-        <div className="p-6 border-b border-border flex items-center justify-between bg-accent/5">
-          <div className="flex items-center space-x-3">
-            <div className="h-10 w-10 rounded-xl bg-warning/10 flex items-center justify-center text-warning">
-              <FileText className="h-5 w-5" />
-            </div>
-            <div>
-              <h3 className="text-xl font-black text-primary tracking-tight">Edit Invoice</h3>
-              <p className="text-[10px] text-secondary font-bold uppercase tracking-widest">{invoice.invoiceNumber} - {invoice.studentName}</p>
-            </div>
-          </div>
-          <button onClick={onClose} className="p-2 hover:bg-border/50 rounded-xl transition-colors">
-            <X className="h-5 w-5 text-secondary" />
-          </button>
-        </div>
-
-        <form onSubmit={handleSave} className="p-6 space-y-4 max-h-[70vh] overflow-y-auto">
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <label className="label">Invoice Date</label>
-              <input type="date" value={invoiceDate} onChange={(e) => setInvoiceDate(e.target.value)} className="input w-full bg-background" required />
-            </div>
-            <div className="space-y-2">
-              <label className="label">Due Date</label>
-              <input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} className="input w-full bg-background" required />
-            </div>
-          </div>
-
-          <div className="space-y-2">
-            <label className="label">Item Description</label>
-            <input type="text" value={itemDescription} onChange={(e) => setItemDescription(e.target.value)} className="input w-full bg-background" required />
-          </div>
-
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <label className="label">Fee Amount (Rate)</label>
-              <input type="number" value={feeAmount} onChange={(e) => setFeeAmount(Number(e.target.value))} className="input w-full bg-background font-mono" required />
-            </div>
-            <div className="space-y-2">
-              <label className="label">Invoice Concession</label>
-              <input type="number" value={invoiceConcession} onChange={(e) => setInvoiceConcession(Number(e.target.value))} className="input w-full bg-background font-mono" />
-              <p className="text-[10px] text-secondary font-bold">Profile Concession: {formatCurrency(profileConcession)}</p>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <label className="label">Terms</label>
-              <input type="text" value={terms} onChange={(e) => setTerms(e.target.value)} className="input w-full bg-background" />
-            </div>
-            <div className="space-y-2">
-              <label className="label">Internal Notes</label>
-              <input type="text" value={notes} onChange={(e) => setNotes(e.target.value)} className="input w-full bg-background" placeholder="Internal only..." />
-            </div>
-          </div>
-
-          <div className="bg-accent/5 p-4 rounded-2xl border border-accent/10 space-y-2">
-            <div className="flex justify-between text-sm">
-              <span className="text-secondary font-bold">Sub Total:</span>
-              <span className="text-primary font-black font-mono">{formatCurrency(feeAmount)}</span>
-            </div>
-            <div className="flex justify-between text-sm">
-              <span className="text-secondary font-bold">Total Discount:</span>
-              <span className="text-danger font-black font-mono">-{formatCurrency(totalConcession)}</span>
-            </div>
-            <div className="flex justify-between text-lg border-t border-accent/10 pt-2">
-              <span className="text-primary font-black">Total:</span>
-              <span className="text-accent font-black font-mono">{formatCurrency(totalAmount)}</span>
-            </div>
-            <div className="flex justify-between text-sm">
-              <span className="text-secondary font-bold">Already Paid:</span>
-              <span className="text-success font-black font-mono">{formatCurrency(invoice.paidAmount)}</span>
-            </div>
-            <div className="flex justify-between text-sm font-bold">
-              <span className="text-secondary">Balance Due:</span>
-              <span className={cn("font-black font-mono", balanceDue > 0 ? "text-danger" : "text-success")}>{formatCurrency(balanceDue)}</span>
-            </div>
-          </div>
-
-          <div className="flex items-center justify-end space-x-3 pt-4">
-            <button type="button" onClick={onClose} className="btn-secondary">Cancel</button>
-            <button type="submit" disabled={loading} className="btn-primary flex-1 flex items-center justify-center space-x-2">
-              {loading ? <div className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" /> : <Save className="h-4 w-4" />}
-              <span>Save Changes</span>
-            </button>
-          </div>
-        </form>
-      </motion.div>
-    </div>
-  );
-}
-
-function InvoiceViewModal({ isOpen, onClose, invoice, org, onEdit, onRecordPayment, onDownload, onWhatsApp, onDelete }: { 
-  isOpen: boolean, 
-  onClose: () => void, 
-  invoice: Invoice, 
-  org: Organization | null,
-  onEdit: () => void,
-  onRecordPayment: () => void,
-  onDownload: () => void,
-  onWhatsApp: () => void,
-  onDelete: () => void
-}) {
-  if (!isOpen) return null;
-
-  return (
-    <div className="fixed inset-0 z-[110] flex items-center justify-center bg-background/80 backdrop-blur-sm p-4">
-      <motion.div
-        initial={{ opacity: 0, scale: 0.95 }}
-        animate={{ opacity: 1, scale: 1 }}
-        className="bg-surface w-full max-w-4xl rounded-3xl shadow-2xl border border-border overflow-hidden flex flex-col max-h-[90vh]"
-      >
-        <div className="p-6 border-b border-border flex items-center justify-between bg-accent/5">
-          <div className="flex items-center space-x-3">
-            <div className="h-10 w-10 rounded-xl bg-accent/10 flex items-center justify-center text-accent">
-              <Eye className="h-5 w-5" />
-            </div>
-            <h3 className="text-xl font-black text-primary tracking-tight">Invoice Preview</h3>
-          </div>
-          <div className="flex items-center space-x-2">
-            <button onClick={onEdit} className="p-2 text-warning hover:bg-warning/10 rounded-lg transition-all" title="Edit"><FileText className="h-4 w-4" /></button>
-            <button onClick={onRecordPayment} disabled={invoice.status === 'PAID'} className="p-2 text-success hover:bg-success/10 rounded-lg transition-all" title="Record Payment"><CreditCard className="h-4 w-4" /></button>
-            <button onClick={onDownload} className="p-2 text-secondary hover:bg-border/50 rounded-lg transition-all" title="Download"><Download className="h-4 w-4" /></button>
-            <button onClick={onWhatsApp} className="p-2 text-accent hover:bg-accent/10 rounded-lg transition-all" title="WhatsApp"><MessageSquare className="h-4 w-4" /></button>
-            <button onClick={onDelete} className="p-2 text-danger hover:bg-danger/10 rounded-lg transition-all" title="Delete"><X className="h-4 w-4" /></button>
-            <button onClick={onClose} className="p-2 hover:bg-border/50 rounded-xl transition-colors ml-2"><X className="h-5 w-5 text-secondary" /></button>
-          </div>
-        </div>
-
-        <div className="flex-1 overflow-y-auto p-8 space-y-8 bg-white">
-          {/* Invoice Header */}
-          <div className="flex justify-between items-start">
-            <div className="space-y-4">
-              {org?.logo_url && <img src={org.logo_url} alt="Logo" className="h-16 w-auto object-contain" referrerPolicy="no-referrer" />}
-              <div>
-                <h4 className="text-2xl font-black text-primary">{org?.name || 'Jagriti Tours & Travels'}</h4>
-                <p className="text-sm text-secondary">{org?.address_line1}, {org?.address_line2} - {org?.zip_code}</p>
-                <p className="text-sm text-secondary">Phone: {org?.phone} | Email: {org?.email}</p>
-              </div>
-            </div>
-            <div className="text-right space-y-2">
-              <h2 className="text-5xl font-black text-accent/20">INVOICE</h2>
-              <div className="space-y-1">
-                <p className="text-sm font-bold text-primary">Invoice #: {invoice.invoiceNumber}</p>
-                <p className="text-sm text-secondary">Date: {format(invoice.invoiceDate.toDate ? invoice.invoiceDate.toDate() : new Date(invoice.invoiceDate), 'dd MMM yyyy')}</p>
-                <p className="text-sm text-secondary">Due Date: {format(invoice.dueDate.toDate ? invoice.dueDate.toDate() : new Date(invoice.dueDate), 'dd MMM yyyy')}</p>
-              </div>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-2 gap-12">
-            <div>
-              <h5 className="text-[10px] font-bold uppercase tracking-widest text-secondary mb-2">Bill To:</h5>
-              <p className="font-black text-primary text-lg">{invoice.studentName}</p>
-              <p className="text-sm text-secondary">{invoice.address}</p>
-              <p className="text-sm text-secondary">Phone: {invoice.phoneNumber}</p>
-            </div>
-          </div>
-
-          {/* Table */}
-          <div className="border border-border rounded-2xl overflow-hidden">
-            <table className="w-full text-left">
-              <thead className="bg-accent text-white">
-                <tr>
-                  <th className="px-6 py-4 text-sm font-black">#</th>
-                  <th className="px-6 py-4 text-sm font-black">Item & Description</th>
-                  <th className="px-6 py-4 text-sm font-black text-right">Rate</th>
-                  <th className="px-6 py-4 text-sm font-black text-right">Amount</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border">
-                <tr>
-                  <td className="px-6 py-4 text-sm">1</td>
-                  <td className="px-6 py-4">
-                    <p className="font-bold text-primary">{invoice.itemDescription || `${invoice.schoolName} [${invoice.standName}] Transport Fees`}</p>
-                    <p className="text-xs text-secondary">Month: {invoice.month}</p>
-                  </td>
-                  <td className="px-6 py-4 text-sm text-right font-mono">{formatCurrency(invoice.feeAmount)}</td>
-                  <td className="px-6 py-4 text-sm text-right font-mono">{formatCurrency(invoice.feeAmount)}</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-
-          {/* Totals */}
-          <div className="flex justify-end">
-            <div className="w-64 space-y-3">
-              <div className="flex justify-between text-sm">
-                <span className="text-secondary font-bold">Sub Total:</span>
-                <span className="text-primary font-black font-mono">{formatCurrency(invoice.feeAmount)}</span>
-              </div>
-              {invoice.concession > 0 && (
-                <div className="flex justify-between text-sm">
-                  <span className="text-secondary font-bold">Concession:</span>
-                  <span className="text-danger font-black font-mono">-{formatCurrency(invoice.concession)}</span>
-                </div>
-              )}
-              <div className="flex justify-between text-lg border-t border-border pt-3">
-                <span className="text-primary font-black">Total:</span>
-                <span className="text-accent font-black font-mono">{formatCurrency(invoice.totalAmount)}</span>
-              </div>
-              <div className="flex justify-between text-sm bg-accent/5 p-2 rounded-lg">
-                <span className="text-secondary font-bold">Balance Due:</span>
-                <span className="text-danger font-black font-mono">{formatCurrency(invoice.balanceDue)}</span>
-              </div>
-            </div>
-          </div>
-
-          {/* Amount in Words */}
-          <div className="pt-8 border-t border-border">
-            <p className="text-[10px] font-bold uppercase tracking-widest text-secondary mb-1">Total in Words:</p>
-            <p className="text-sm font-bold text-primary italic">{amountToWordsIndian(invoice.totalAmount)} Only</p>
-          </div>
-
-          {/* Internal Notes Section */}
-          {invoice.notes && (
-            <div className="p-4 bg-warning/10 border border-warning/20 rounded-2xl">
-              <h5 className="text-xs font-black text-warning uppercase tracking-wider mb-2 flex items-center gap-2">
-                <AlertCircle className="h-3 w-3" />
-                Internal Notes (Not Printed)
-              </h5>
-              <p className="text-sm text-primary">{invoice.notes}</p>
-            </div>
-          )}
-
-          {/* Edit History */}
-          {invoice.editHistory && invoice.editHistory.length > 0 && (
-            <div className="pt-8 border-t border-border">
-              <h5 className="text-[10px] font-bold uppercase tracking-widest text-secondary mb-4">Edit History:</h5>
-              <div className="space-y-3">
-                {invoice.editHistory.map((entry, idx) => (
-                  <div key={idx} className="flex items-center space-x-3 text-xs">
-                    <div className="h-2 w-2 rounded-full bg-accent" />
-                    <span className="text-secondary">Edited by <span className="font-bold text-primary">{entry.userName}</span> on {format(entry.editedAt.toDate ? entry.editedAt.toDate() : new Date(entry.editedAt), 'dd MMM yyyy, hh:mm a')}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-      </motion.div>
-    </div>
-  );
-}
-
-function ReceiptDetailModal({ isOpen, onClose, receipt, invoice, profile }: { 
-  isOpen: boolean, 
-  onClose: () => void, 
-  receipt: Receipt, 
-  invoice: Invoice | undefined,
-  profile: any 
-}) {
-  const [isEditingNotes, setIsEditingNotes] = useState(false);
-  const [notes, setNotes] = useState(receipt.notes || '');
-  const [loading, setLoading] = useState(false);
-
-  const handleSaveNotes = async () => {
-    setLoading(true);
-    try {
-      await updateDoc(doc(db, 'receipts', receipt.id), {
-        notes,
-        updatedAt: serverTimestamp()
-      });
-      setIsEditingNotes(false);
-      alert('Notes updated successfully.');
-    } catch (error) {
-      console.error('Error updating receipt notes:', error);
-      handleFirestoreError(error, OperationType.UPDATE, `receipts/${receipt.id}`);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  if (!isOpen) return null;
-
-  return (
-    <div className="fixed inset-0 z-[110] flex items-center justify-center bg-background/80 backdrop-blur-sm p-4">
-      <motion.div
-        initial={{ opacity: 0, scale: 0.95 }}
-        animate={{ opacity: 1, scale: 1 }}
-        className="bg-surface w-full max-w-lg rounded-3xl shadow-2xl border border-border overflow-hidden"
-      >
-        <div className="p-6 border-b border-border flex items-center justify-between bg-accent/5">
-          <div className="flex items-center space-x-3">
-            <div className="h-10 w-10 rounded-xl bg-success/10 flex items-center justify-center text-success">
-              <CheckCircle2 className="h-5 w-5" />
-            </div>
-            <div>
-              <h3 className="text-xl font-black text-primary tracking-tight">Receipt Details</h3>
-              <p className="text-[10px] text-secondary font-bold uppercase tracking-widest">{receipt.receiptNumber}</p>
-            </div>
-          </div>
-          <button onClick={onClose} className="p-2 hover:bg-border/50 rounded-xl transition-colors">
-            <X className="h-5 w-5 text-secondary" />
-          </button>
-        </div>
-
-        <div className="p-6 space-y-6">
-          <div className="grid grid-cols-2 gap-6">
-            <div className="space-y-1">
-              <p className="text-[10px] font-bold text-secondary uppercase tracking-widest">Student</p>
-              <p className="text-sm font-black text-primary">{receipt.studentName}</p>
-            </div>
-            <div className="space-y-1">
-              <p className="text-[10px] font-bold text-secondary uppercase tracking-widest">Amount Received</p>
-              <p className="text-lg font-black text-success">{formatCurrency(receipt.amountReceived)}</p>
-            </div>
-            <div className="space-y-1">
-              <p className="text-[10px] font-bold text-secondary uppercase tracking-widest">Payment Date</p>
-              <p className="text-sm font-bold text-primary">{format(receipt.paymentDate.toDate ? receipt.paymentDate.toDate() : new Date(receipt.paymentDate), 'dd MMM yyyy')}</p>
-            </div>
-            <div className="space-y-1">
-              <p className="text-[10px] font-bold text-secondary uppercase tracking-widest">Payment Mode</p>
-              <p className="text-sm font-bold text-primary">{receipt.paymentMode}</p>
-            </div>
-          </div>
-
-          {/* Internal Notes Section */}
-          <div className="p-4 bg-warning/10 border border-warning/20 rounded-2xl space-y-3">
-            <div className="flex items-center justify-between">
-              <h5 className="text-xs font-black text-warning uppercase tracking-wider flex items-center gap-2">
-                <AlertCircle className="h-3 w-3" />
-                Internal Notes (Not Printed)
-              </h5>
-              {!isEditingNotes && (
-                <button 
-                  onClick={() => setIsEditingNotes(true)}
-                  className="text-[10px] font-bold text-warning hover:underline"
-                >
-                  Edit Notes
+              <div className="p-6 border-b border-border flex items-center justify-between bg-accent/5">
+                <h3 className="text-lg font-black text-primary tracking-tight">Customize Invoice</h3>
+                <button onClick={() => setEditingCustomizationId(null)} className="p-2 hover:bg-border/50 rounded-xl transition-colors">
+                  <X className="h-5 w-5 text-secondary" />
                 </button>
-              )}
-            </div>
-            
-            {isEditingNotes ? (
-              <div className="space-y-3">
-                <textarea
-                  value={notes}
-                  onChange={(e) => setNotes(e.target.value)}
-                  className="input w-full bg-background min-h-[80px] text-sm resize-none"
-                  placeholder="Add internal notes..."
-                />
-                <div className="flex justify-end space-x-2">
-                  <button onClick={() => setIsEditingNotes(false)} className="px-3 py-1 text-[10px] font-bold text-secondary hover:bg-border/50 rounded-lg">Cancel</button>
-                  <button 
-                    onClick={handleSaveNotes} 
-                    disabled={loading}
-                    className="px-3 py-1 text-[10px] font-bold bg-warning text-white rounded-lg hover:bg-warning/90"
-                  >
-                    {loading ? 'Saving...' : 'Save Notes'}
-                  </button>
+              </div>
+              <div className="p-6 space-y-4">
+                <div className="space-y-2">
+                  <label className="label">School Name</label>
+                  <input
+                    type="text"
+                    value={customizations[editingCustomizationId]?.schoolName || eligibleStudents.find(s => s.id === editingCustomizationId)?.schoolName || ''}
+                    onChange={(e) => setCustomizations({
+                      ...customizations,
+                      [editingCustomizationId]: { ...customizations[editingCustomizationId], schoolName: e.target.value }
+                    })}
+                    className="input w-full bg-background"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="label">Description</label>
+                  <textarea
+                    value={customizations[editingCustomizationId]?.description || batchDescription || ''}
+                    onChange={(e) => setCustomizations({
+                      ...customizations,
+                      [editingCustomizationId]: { ...customizations[editingCustomizationId], description: e.target.value }
+                    })}
+                    className="input w-full bg-background min-h-[80px] resize-none"
+                    placeholder="Student specific description..."
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="label">Terms</label>
+                  <input
+                    type="text"
+                    value={customizations[editingCustomizationId]?.terms || batchTerms || ''}
+                    onChange={(e) => setCustomizations({
+                      ...customizations,
+                      [editingCustomizationId]: { ...customizations[editingCustomizationId], terms: e.target.value }
+                    })}
+                    className="input w-full bg-background"
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <label className="label">Fee Amount (₹)</label>
+                    <input
+                      type="number"
+                      value={customizations[editingCustomizationId]?.feeAmount ?? eligibleStudents.find(s => s.id === editingCustomizationId)?.feeAmount ?? 0}
+                      onChange={(e) => setCustomizations({
+                        ...customizations,
+                        [editingCustomizationId]: { ...customizations[editingCustomizationId], feeAmount: Number(e.target.value) }
+                      })}
+                      className="input w-full bg-background font-mono"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="label">Concession (₹)</label>
+                    <input
+                      type="number"
+                      value={customizations[editingCustomizationId]?.concession ?? eligibleStudents.find(s => s.id === editingCustomizationId)?.concession ?? 0}
+                      onChange={(e) => setCustomizations({
+                        ...customizations,
+                        [editingCustomizationId]: { ...customizations[editingCustomizationId], concession: Number(e.target.value) }
+                      })}
+                      className="input w-full bg-background font-mono text-success"
+                    />
+                  </div>
+                </div>
+                <div className="flex justify-end space-x-3 pt-4">
+                  <button onClick={() => {
+                    const newCust = { ...customizations };
+                    delete newCust[editingCustomizationId];
+                    setCustomizations(newCust);
+                    setEditingCustomizationId(null);
+                  }} className="btn-secondary text-danger border-danger/20 hover:bg-danger/5">Reset to Default</button>
+                  <button onClick={() => setEditingCustomizationId(null)} className="btn-primary">Apply Changes</button>
                 </div>
               </div>
-            ) : (
-              <p className="text-sm text-primary">{receipt.notes || 'No internal notes added.'}</p>
-            )}
+            </motion.div>
           </div>
-        </div>
-
-        <div className="p-6 border-t border-border bg-accent/5 flex justify-end">
-          <button onClick={onClose} className="btn-primary">Close</button>
-        </div>
+        )}
       </motion.div>
     </div>
   );

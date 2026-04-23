@@ -39,7 +39,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         if (docSnap.exists()) {
           const data = docSnap.data() as Profile;
           if (user.email === 'dhruvsingh349@gmail.com') {
-            data.role = 'admin';
+            data.role = 'developer';
           }
           setProfile(data);
         } else {
@@ -47,8 +47,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             setProfile({
               id: user.uid,
               email: user.email!,
-              role: 'admin',
-              full_name: user.displayName || 'Admin'
+              role: 'developer',
+              full_name: user.displayName || 'Dhruv Singh'
             });
           } else {
             setProfile(null);

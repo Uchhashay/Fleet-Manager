@@ -43,8 +43,10 @@ import {
   Info,
   DollarSign,
   Upload,
-  Download
+  Download,
+  FileText
 } from 'lucide-react';
+import { RaiseSingleInvoiceModal } from '../components/RaiseSingleInvoiceModal';
 import { motion, AnimatePresence } from 'framer-motion';
 
 export function StudentDatabase() {
@@ -148,6 +150,9 @@ export function StudentDatabase() {
     setSelectedStudent(student);
     setIsProfileModalOpen(true);
   };
+
+  const [selectedStudentForInvoice, setSelectedStudentForInvoice] = useState<Student | null>(null);
+  const [isRaiseInvoiceModalOpen, setIsRaiseInvoiceModalOpen] = useState(false);
 
   const handleOpenModal = (student?: Student) => {
     if (student) {
@@ -299,7 +304,7 @@ export function StudentDatabase() {
             <Download className="h-4 w-4" />
             <span className="hidden sm:inline">Export</span>
           </button>
-          {profile?.role === 'admin' && (
+          {(profile?.role === 'admin' || profile?.role === 'developer') && (
             <button
               onClick={() => setIsImportModalOpen(true)}
               className="btn-secondary flex items-center space-x-2"
@@ -501,13 +506,23 @@ export function StudentDatabase() {
                   <td className="px-6 py-4 text-right">
                     <div className="flex items-center justify-end space-x-2" onClick={(e) => e.stopPropagation()}>
                       <button
+                        onClick={() => {
+                          setSelectedStudentForInvoice(student);
+                          setIsRaiseInvoiceModalOpen(true);
+                        }}
+                        className="p-2 text-secondary hover:text-accent hover:bg-accent/10 rounded-lg transition-all"
+                        title="Raise Invoice"
+                      >
+                        <FileText className="h-4 w-4" />
+                      </button>
+                      <button
                         onClick={() => handleOpenModal(student)}
                         className="p-2 text-secondary hover:text-accent hover:bg-accent/10 rounded-lg transition-all"
                         title="Edit Student"
                       >
                         <Edit2 className="h-4 w-4" />
                       </button>
-                      {profile?.role === 'admin' && (
+                      {(profile?.role === 'admin' || profile?.role === 'developer') && (
                         <button
                           onClick={() => handleDelete(student)}
                           className="p-2 text-secondary hover:text-danger hover:bg-danger/10 rounded-lg transition-all"
@@ -838,6 +853,18 @@ export function StudentDatabase() {
         schools={schools}
         stands={uniqueStands}
       />
+      {/* Raise Invoice Modal */}
+      {selectedStudentForInvoice && (
+        <RaiseSingleInvoiceModal
+          isOpen={isRaiseInvoiceModalOpen}
+          onClose={() => {
+            setIsRaiseInvoiceModalOpen(false);
+            setSelectedStudentForInvoice(null);
+          }}
+          student={selectedStudentForInvoice}
+          profile={profile}
+        />
+      )}
     </div>
   );
 }

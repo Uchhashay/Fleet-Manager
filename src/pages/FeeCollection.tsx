@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { db, auth } from '../lib/firebase';
-import { collection, query, where, onSnapshot, orderBy, addDoc, serverTimestamp, Timestamp, getDocs } from 'firebase/firestore';
+import { writeBatch, doc, increment, limit, collection, query, where, onSnapshot, orderBy, addDoc, serverTimestamp, Timestamp, getDocs } from 'firebase/firestore';
 import { format, startOfMonth, endOfMonth } from 'date-fns';
 import { 
   Plus, 
@@ -12,14 +12,16 @@ import {
   CreditCard,
   Calendar,
   Filter,
-  ChevronDown
+  ChevronDown,
+  Search
 } from 'lucide-react';
 import { formatCurrency, cn } from '../lib/utils';
 import { FeeCollection, Student } from '../types';
 import { handleFirestoreError, OperationType } from '../lib/firebase-utils';
 import { logActivity } from '../lib/activity-logger';
 import { motion, AnimatePresence } from 'framer-motion';
-import { writeBatch, doc, increment, limit } from 'firebase/firestore';
+import { applyPaymentToInvoices } from '../lib/invoice-utils';
+import { amountToWordsIndian } from '../lib/number-utils';
 
 import { useAuth } from '../contexts/AuthContext';
 
@@ -122,6 +124,9 @@ export function FeeCollectionPage() {
 
       // If a student is selected, update their balance and create a receipt
       if (selectedStudent) {
+        // Apply payment to invoices using FIFO
+        const linkedInvoices = await applyPaymentToInvoices(batch, selectedStudent.id, formData.amount);
+
         // Update student balance
         batch.update(doc(db, 'students', selectedStudent.id), {
           totalBalance: increment(-formData.amount)
@@ -129,9 +134,13 @@ export function FeeCollectionPage() {
 
         // Add timeline
         const timelineRef = doc(collection(db, 'students', selectedStudent.id, 'timeline'));
+        const invoiceInfo = linkedInvoices.length > 0 
+          ? `Adjusted against: ${linkedInvoices.map(li => li.invoiceNumber).join(', ')}`
+          : 'No pending invoices found to adjust against.';
+          
         batch.set(timelineRef, {
           event: 'Fee Collected',
-          description: `Collected ₹${formData.amount} via Fee Collection module (${formData.payment_mode})`,
+          description: `Collected ₹${formData.amount} via Fee Collection module (${formData.payment_mode}). ${invoiceInfo}`,
           createdBy: profile?.full_name || 'System',
           createdAt: serverTimestamp()
         });
@@ -141,13 +150,37 @@ export function FeeCollectionPage() {
         const snap = await getDocs(q);
         let lastNum = 0;
         if (!snap.empty) {
-          lastNum = parseInt(snap.docs[0].data().receiptNumber.split('-')[1]);
+          const lastReceiptNumber = snap.docs[0].data().receiptNumber;
+          const parts = lastReceiptNumber.split('-');
+          if (parts.length > 1) {
+            lastNum = parseInt(parts[1]);
+          }
         }
         const receiptNumber = `RCP-${(lastNum + 1).toString().padStart(6, '0')}`;
 
         const receiptRef = doc(collection(db, 'receipts'));
+        
+        // Generate description from months
+        const monthsPaid = linkedInvoices
+          .filter(li => li.invoiceId !== 'ADVANCE')
+          .map(li => li.month);
+        const uniqueMonths = [...new Set(monthsPaid)];
+        const hasAdvance = linkedInvoices.some(li => li.invoiceId === 'ADVANCE');
+        
+        let description = uniqueMonths.length > 0 
+          ? `Fees for ${uniqueMonths.join(', ')}`
+          : 'Transport Fees';
+          
+        if (hasAdvance) {
+          description += uniqueMonths.length > 0 ? ' (incl. Advance)' : 'Advance Payment';
+        }
+        
+        if (formData.notes) description = formData.notes;
+
         batch.set(receiptRef, {
           receiptNumber,
+          invoiceId: linkedInvoices[0]?.invoiceId || 'N/A',
+          invoiceNumber: linkedInvoices[0]?.invoiceNumber || 'N/A',
           studentId: selectedStudent.id,
           studentName: selectedStudent.studentName,
           fatherName: selectedStudent.fatherName,
@@ -158,6 +191,9 @@ export function FeeCollectionPage() {
           feeType: formData.fee_type,
           receivedBy: formData.received_by || profile?.full_name || 'System',
           amountReceived: formData.amount,
+          amountInWords: amountToWordsIndian(formData.amount),
+          linkedInvoices,
+          description,
           notes: formData.notes,
           createdAt: serverTimestamp()
         });

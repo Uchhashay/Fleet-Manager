@@ -12,7 +12,7 @@ import { BusManager } from './pages/BusManager';
 import { DriverPortal } from './pages/DriverPortal';
 import { ExpenseEntry } from './pages/ExpenseEntry';
 import { SalaryManager } from './pages/SalaryManager';
-import { Cleanup } from './pages/Cleanup';
+import { DeveloperTools } from './pages/DeveloperTools';
 import { UserManager } from './pages/UserManager';
 import { AccountantDashboard } from './pages/AccountantDashboard';
 import { Cashbook } from './pages/Cashbook';
@@ -51,93 +51,93 @@ export default function App() {
               </ProtectedRoute>
             }>
               <Route index element={<Home />} />
-              <Route path="cleanup" element={
-                <ProtectedRoute allowedRoles={['admin']}>
-                  <Cleanup />
+              <Route path="dev-tools" element={
+                <ProtectedRoute allowedRoles={['admin', 'developer']}>
+                  <DeveloperTools />
                 </ProtectedRoute>
               } />
               <Route path="users" element={
-                <ProtectedRoute allowedRoles={['admin']}>
+                <ProtectedRoute allowedRoles={['admin', 'developer']}>
                   <UserManager />
                 </ProtectedRoute>
               } />
               <Route path="entry" element={
-                <ProtectedRoute allowedRoles={['admin', 'accountant']}>
+                <ProtectedRoute allowedRoles={['admin', 'accountant', 'developer']}>
                   <DailyEntry />
                 </ProtectedRoute>
               } />
               <Route path="expenses" element={
-                <ProtectedRoute allowedRoles={['admin', 'accountant']}>
+                <ProtectedRoute allowedRoles={['admin', 'accountant', 'developer']}>
                   <ExpenseEntry />
                 </ProtectedRoute>
               } />
               <Route path="accountant" element={
-                <ProtectedRoute allowedRoles={['admin', 'accountant']}>
+                <ProtectedRoute allowedRoles={['admin', 'accountant', 'developer']}>
                   <AccountantDashboard />
                 </ProtectedRoute>
               } />
               <Route path="cashbook" element={
-                <ProtectedRoute allowedRoles={['admin', 'accountant']}>
+                <ProtectedRoute allowedRoles={['admin', 'accountant', 'developer']}>
                   <Cashbook />
                 </ProtectedRoute>
               } />
               <Route path="fees" element={
-                <ProtectedRoute allowedRoles={['admin', 'accountant']}>
+                <ProtectedRoute allowedRoles={['admin', 'accountant', 'developer']}>
                   <Navigate to="/fees/collection" replace />
                 </ProtectedRoute>
               } />
               <Route path="fees/collection" element={
-                <ProtectedRoute allowedRoles={['admin', 'accountant']}>
+                <ProtectedRoute allowedRoles={['admin', 'accountant', 'developer']}>
                   <FeeCollectionPage />
                 </ProtectedRoute>
               } />
               <Route path="fees/students" element={
-                <ProtectedRoute allowedRoles={['admin', 'accountant']}>
+                <ProtectedRoute allowedRoles={['admin', 'accountant', 'developer']}>
                   <StudentDatabase />
                 </ProtectedRoute>
               } />
               <Route path="fees/invoices" element={
-                <ProtectedRoute allowedRoles={['admin', 'accountant']}>
+                <ProtectedRoute allowedRoles={['admin', 'accountant', 'developer']}>
                   <InvoiceReceipt />
                 </ProtectedRoute>
               } />
               <Route path="fees/analysis" element={
-                <ProtectedRoute allowedRoles={['admin', 'accountant']}>
+                <ProtectedRoute allowedRoles={['admin', 'accountant', 'developer']}>
                   <ComingSoon title="Tracking & Analysis" />
                 </ProtectedRoute>
               } />
               <Route path="monthly" element={
-                <ProtectedRoute allowedRoles={['admin', 'accountant']}>
+                <ProtectedRoute allowedRoles={['admin', 'accountant', 'developer']}>
                   <MonthlyView />
                 </ProtectedRoute>
               } />
               <Route path="reports" element={
-                <ProtectedRoute allowedRoles={['admin', 'accountant']}>
+                <ProtectedRoute allowedRoles={['admin', 'accountant', 'developer']}>
                   <AccountantReports />
                 </ProtectedRoute>
               } />
               <Route path="staff" element={
-                <ProtectedRoute allowedRoles={['admin', 'accountant']}>
+                <ProtectedRoute allowedRoles={['admin', 'accountant', 'developer']}>
                   <StaffManager />
                 </ProtectedRoute>
               } />
               <Route path="admin/drivers/:id" element={
-                <ProtectedRoute allowedRoles={['admin']}>
+                <ProtectedRoute allowedRoles={['admin', 'developer']}>
                   <DriverPerformance />
                 </ProtectedRoute>
               } />
               <Route path="salaries" element={
-                <ProtectedRoute allowedRoles={['admin', 'accountant']}>
+                <ProtectedRoute allowedRoles={['admin', 'accountant', 'developer']}>
                   <SalaryManager />
                 </ProtectedRoute>
               } />
               <Route path="buses" element={
-                <ProtectedRoute allowedRoles={['admin']}>
+                <ProtectedRoute allowedRoles={['admin', 'developer']}>
                   <BusManager />
                 </ProtectedRoute>
               } />
               <Route path="settings" element={
-                <ProtectedRoute allowedRoles={['admin']}>
+                <ProtectedRoute allowedRoles={['admin', 'developer']}>
                   <Settings />
                 </ProtectedRoute>
               } />

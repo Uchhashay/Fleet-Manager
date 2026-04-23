@@ -47,7 +47,7 @@ export function DailyEntry() {
   });
 
   useEffect(() => {
-    if (profile?.role === 'admin') {
+    if (profile?.role === 'admin' || profile?.role === 'developer') {
       setFormData(prev => ({ ...prev, paid_by: 'owner' }));
     } else {
       setFormData(prev => ({ ...prev, paid_by: 'accountant' }));
@@ -195,7 +195,7 @@ export function DailyEntry() {
         helper_duty_payable: 0,
         helper_duty_paid: 0,
         notes: '',
-        paid_by: profile?.role === 'admin' ? 'owner' : 'accountant'
+        paid_by: (profile?.role === 'admin' || profile?.role === 'developer') ? 'owner' : 'accountant'
       }));
     } catch (error: any) {
       console.error('Error saving record:', error);
@@ -391,34 +391,62 @@ export function DailyEntry() {
                 <div className={cn("grid gap-8", formData.is_holiday && "opacity-30 pointer-events-none")}>
                   <div className="space-y-4">
                     <h3 className="text-[10px] font-bold text-secondary uppercase tracking-widest">School Staff Route</h3>
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="space-y-2">
-                        <label className="label !mb-0 text-[10px]">Morning School</label>
-                        <select
-                          name="school_morning_name"
-                          value={formData.school_morning_name}
-                          onChange={handleInputChange}
-                          className="input"
-                        >
-                          <option value="">Select School</option>
-                          {schools.map(s => (
-                            <option key={s.id} value={s.name}>{s.name}</option>
-                          ))}
-                        </select>
+                    <div className="grid grid-cols-2 gap-6">
+                      <div className="space-y-3">
+                        <div className="space-y-2">
+                          <label className="label !mb-0 text-[10px]">Morning School</label>
+                          <select
+                            name="school_morning_name"
+                            value={formData.school_morning_name}
+                            onChange={handleInputChange}
+                            className="input"
+                          >
+                            <option value="">Select School</option>
+                            {schools.map(s => (
+                              <option key={s.id} value={s.name}>{s.name}</option>
+                            ))}
+                          </select>
+                        </div>
+                        <div className="space-y-2">
+                          <label className="label !mb-0 text-[10px]">Morning Amount (₹)</label>
+                          <input 
+                            type="number" 
+                            inputMode="numeric" 
+                            name="school_morning" 
+                            value={formData.school_morning || ''} 
+                            onChange={handleInputChange} 
+                            className="input font-mono" 
+                            placeholder="0" 
+                          />
+                        </div>
                       </div>
-                      <div className="space-y-2">
-                        <label className="label !mb-0 text-[10px]">Evening School</label>
-                        <select
-                          name="school_evening_name"
-                          value={formData.school_evening_name}
-                          onChange={handleInputChange}
-                          className="input"
-                        >
-                          <option value="">Select School</option>
-                          {schools.map(s => (
-                            <option key={s.id} value={s.name}>{s.name}</option>
-                          ))}
-                        </select>
+                      <div className="space-y-3">
+                        <div className="space-y-2">
+                          <label className="label !mb-0 text-[10px]">Evening School</label>
+                          <select
+                            name="school_evening_name"
+                            value={formData.school_evening_name}
+                            onChange={handleInputChange}
+                            className="input"
+                          >
+                            <option value="">Select School</option>
+                            {schools.map(s => (
+                              <option key={s.id} value={s.name}>{s.name}</option>
+                            ))}
+                          </select>
+                        </div>
+                        <div className="space-y-2">
+                          <label className="label !mb-0 text-[10px]">Evening Amount (₹)</label>
+                          <input 
+                            type="number" 
+                            inputMode="numeric" 
+                            name="school_evening" 
+                            value={formData.school_evening || ''} 
+                            onChange={handleInputChange} 
+                            className="input font-mono" 
+                            placeholder="0" 
+                          />
+                        </div>
                       </div>
                     </div>
                   </div>

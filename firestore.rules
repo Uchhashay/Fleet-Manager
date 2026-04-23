@@ -81,7 +81,8 @@ service cloud.firestore {
         (
           (request.auth.token.email == "dhruvsingh349@gmail.com") ||
           (exists(/databases/$(database)/documents/profiles/$(request.auth.uid)) && 
-           get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data.role == 'admin')
+           (get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data.role == 'admin' ||
+            get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data.role == 'developer'))
         );
     }
 
@@ -104,7 +105,7 @@ service cloud.firestore {
     function isValidUserProfile(data) {
       return data.keys().hasAll(['full_name', 'role']) &&
              data.full_name is string && data.full_name.size() > 0 && data.full_name.size() < 100 &&
-             data.role in ['admin', 'accountant', 'driver', 'helper'];
+             data.role in ['admin', 'accountant', 'driver', 'helper', 'developer'];
     }
 
     // ===============================================================
@@ -177,7 +178,7 @@ service cloud.firestore {
       match /timeline/{eventId} {
         allow read: if isAuthenticated() && (isAdmin() || isAccountant());
         allow create: if isAuthenticated();
-        allow update, delete: if false;
+        allow update, delete: if isAdmin();
       }
 
       match /transactions/{transactionId} {
@@ -218,7 +219,7 @@ service cloud.firestore {
     match /activity_logs/{logId} {
       allow read: if isAdmin();
       allow create: if isAuthenticated();
-      allow update, delete: if false;
+      allow update, delete: if isAdmin();
     }
   }
 }

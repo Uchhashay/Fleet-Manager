@@ -6,7 +6,11 @@
       "type": "object",
       "properties": {
         "full_name": { "type": "string", "description": "Full name of the user." },
-        "role": { "type": "string", "enum": ["admin", "accountant", "driver", "helper"], "description": "Role of the user." },
+        "role": { "type": "string", "enum": ["admin", "accountant", "driver", "helper", "developer"], "description": "Role of the user." },
+        "permissions": {
+          "type": "object",
+          "description": "Granular module-level permissions."
+        },
         "created_at": { "type": "string", "format": "date-time", "description": "When the profile was created." }
       },
       "required": ["full_name", "role"]

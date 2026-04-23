@@ -44,7 +44,7 @@ export function MonthlyView() {
   const [saving, setSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
 
-  const canEdit = profile?.role === 'admin' || profile?.role === 'accountant';
+  const canEdit = profile?.role === 'admin' || profile?.role === 'accountant' || profile?.role === 'developer';
 
   const toggleColumn = (col: string) => {
     const next = new Set(visibleColumns);
@@ -728,16 +728,25 @@ export function MonthlyView() {
                             <>
                               <td className="px-6 py-4 text-center text-xs border-x border-border/10">
                                 {isEditMode ? (
-                                  <select
-                                    value={r?.school_morning_name || ''}
-                                    onChange={(e) => handleLocalChange(row.date, r?.bus_id || row.busId, 'school_morning_name', e.target.value, record)}
-                                    className="w-24 text-[10px] bg-background border border-border rounded px-1 py-0.5"
-                                  >
-                                    <option value="">Select School</option>
-                                    {schools.map(s => (
-                                      <option key={s.id} value={s.name}>{s.name}</option>
-                                    ))}
-                                  </select>
+                                  <div className="flex flex-col space-y-1">
+                                    <select
+                                      value={r?.school_morning_name || ''}
+                                      onChange={(e) => handleLocalChange(row.date, r?.bus_id || row.busId, 'school_morning_name', e.target.value, record)}
+                                      className="w-24 text-[10px] bg-background border border-border rounded px-1 py-0.5"
+                                    >
+                                      <option value="">Select School</option>
+                                      {schools.map(s => (
+                                        <option key={s.id} value={s.name}>{s.name}</option>
+                                      ))}
+                                    </select>
+                                    <input 
+                                      type="number" 
+                                      value={r?.school_morning || 0}
+                                      onChange={(e) => handleLocalChange(row.date, r?.bus_id || row.busId, 'school_morning', Number(e.target.value), record)}
+                                      className="w-24 text-center text-[10px] bg-background border border-border rounded px-1 py-0.5 font-mono"
+                                      placeholder="Amount"
+                                    />
+                                  </div>
                                 ) : (
                                   <div className="flex flex-col items-center">
                                     <span className="font-bold text-primary truncate max-w-[80px]" title={r?.school_morning_name}>
@@ -751,16 +760,25 @@ export function MonthlyView() {
                               </td>
                               <td className="px-6 py-4 text-center text-xs border-x border-border/10">
                                 {isEditMode ? (
-                                  <select
-                                    value={r?.school_evening_name || ''}
-                                    onChange={(e) => handleLocalChange(row.date, r?.bus_id || row.busId, 'school_evening_name', e.target.value, record)}
-                                    className="w-24 text-[10px] bg-background border border-border rounded px-1 py-0.5"
-                                  >
-                                    <option value="">Select School</option>
-                                    {schools.map(s => (
-                                      <option key={s.id} value={s.name}>{s.name}</option>
-                                    ))}
-                                  </select>
+                                  <div className="flex flex-col space-y-1">
+                                    <select
+                                      value={r?.school_evening_name || ''}
+                                      onChange={(e) => handleLocalChange(row.date, r?.bus_id || row.busId, 'school_evening_name', e.target.value, record)}
+                                      className="w-24 text-[10px] bg-background border border-border rounded px-1 py-0.5"
+                                    >
+                                      <option value="">Select School</option>
+                                      {schools.map(s => (
+                                        <option key={s.id} value={s.name}>{s.name}</option>
+                                      ))}
+                                    </select>
+                                    <input 
+                                      type="number" 
+                                      value={r?.school_evening || 0}
+                                      onChange={(e) => handleLocalChange(row.date, r?.bus_id || row.busId, 'school_evening', Number(e.target.value), record)}
+                                      className="w-24 text-center text-[10px] bg-background border border-border rounded px-1 py-0.5 font-mono"
+                                      placeholder="Amount"
+                                    />
+                                  </div>
                                 ) : (
                                   <div className="flex flex-col items-center">
                                     <span className="font-bold text-primary truncate max-w-[80px]" title={r?.school_evening_name}>

@@ -121,7 +121,7 @@ export const generateInvoicePDF = (invoice: Invoice, org: Organization) => {
   return doc;
 };
 
-export const generateReceiptPDF = (receipt: Receipt, invoice: Invoice, org: Organization) => {
+export const generateReceiptPDF = (receipt: Receipt, invoice: Invoice | undefined, org: Organization) => {
   const doc = new jsPDF();
   const pageWidth = doc.internal.pageSize.width;
 
@@ -177,87 +177,230 @@ export const generateReceiptPDF = (receipt: Receipt, invoice: Invoice, org: Orga
   doc.setFont('helvetica', 'normal');
   doc.text(receipt.amountInWords || amountToWordsIndian(receipt.amountReceived || 0), 15, 120);
 
-  // Payment For Table
-  const invDate = invoice.invoiceDate?.toDate ? format(invoice.invoiceDate.toDate(), 'dd MMM yyyy') : 'N/A';
-  autoTable(doc, {
-    startY: 130,
-    head: [['Invoice Number', 'Invoice Date', 'Invoice Amount', 'Payment Amount']],
-    body: [
-      [
-        invoice.invoiceNumber || 'N/A',
-        invDate,
-        formatPDFCurrency(invoice.totalAmount || 0),
-        formatPDFCurrency(receipt.amountReceived || 0)
-      ]
-    ],
-    headStyles: { fillColor: [243, 244, 246], textColor: [0, 0, 0] }
-  });
+  // Description Section
+  doc.setFont('helvetica', 'bold');
+  doc.text('Payment Description:', 15, 130);
+  doc.setFont('helvetica', 'normal');
+  doc.text(receipt.description || 'Transport Fees', 15, 135);
+
+  // Payment For Table (Linked Invoices)
+  if (receipt.linkedInvoices && receipt.linkedInvoices.length > 0) {
+    autoTable(doc, {
+      startY: 145,
+      head: [['Invoice Number', 'Month', 'Amount Applied', 'Status']],
+      body: receipt.linkedInvoices.map(li => [
+        li.invoiceNumber,
+        li.month,
+        formatPDFCurrency(li.amountApplied),
+        li.status || 'PAID'
+      ]),
+      headStyles: { fillColor: [243, 244, 246], textColor: [0, 0, 0] }
+    });
+  } else if (invoice) {
+    const invDate = invoice.invoiceDate?.toDate ? format(invoice.invoiceDate.toDate(), 'dd MMM yyyy') : 'N/A';
+    autoTable(doc, {
+      startY: 145,
+      head: [['Invoice Number', 'Invoice Date', 'Invoice Amount', 'Payment Amount', 'Status']],
+      body: [
+        [
+          invoice.invoiceNumber || 'N/A',
+          invDate,
+          formatPDFCurrency(invoice.totalAmount || 0),
+          formatPDFCurrency(receipt.amountReceived || 0),
+          invoice.status || 'PAID'
+        ]
+      ],
+      headStyles: { fillColor: [243, 244, 246], textColor: [0, 0, 0] }
+    });
+  }
 
   // Signature
-  const finalY = (doc as any).lastAutoTable.finalY;
+  const finalY = (doc as any).lastAutoTable ? (doc as any).lastAutoTable.finalY : 160;
   doc.text('Authorized Signature', pageWidth - 50, finalY + 40, { align: 'center' });
   doc.line(pageWidth - 75, finalY + 35, pageWidth - 25, finalY + 35);
 
   return doc;
 };
 
-export const generateStatementPDF = (student: Student, invoices: Invoice[], org: Organization, dateRange: { start: Date, end: Date }) => {
+export const generateStatementPDF = (
+  student: Student, 
+  invoices: Invoice[], 
+  receipts: Receipt[], 
+  org: Organization, 
+  dateRange: { start: Date, end: Date }
+) => {
   const doc = new jsPDF();
   const pageWidth = doc.internal.pageSize.width;
 
-  // Header (Same as invoice)
+  const formatRupee = (amount: number) => {
+    return 'Rs. ' + new Intl.NumberFormat('en-IN', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(amount || 0);
+  };
+
+  const formatDate = (date: any) => {
+    if (!date) return 'N/A';
+    try {
+      const d = date.toDate ? date.toDate() : new Date(date);
+      if (isNaN(d.getTime())) return 'N/A';
+      return format(d, 'dd/MM/yyyy');
+    } catch (e) {
+      return 'N/A';
+    }
+  };
+
+  // Header Left
   if (org.logo_url) {
-    doc.addImage(org.logo_url, 'PNG', 15, 15, 25, 25);
+    try {
+      doc.addImage(org.logo_url, 'PNG', 15, 15, 25, 25);
+    } catch (e) {
+      console.error('PDF Logo Error:', e);
+    }
   }
-  doc.setFontSize(18);
+  doc.setFontSize(16);
   doc.setFont('helvetica', 'bold');
-  doc.text(org.name || 'Jagriti Tours & Travels', 45, 22);
+  doc.text(org.name || 'Jagriti Tours & Travels', 45, 25);
+
+  // Header Right
+  doc.setFontSize(9);
+  doc.setFont('helvetica', 'normal');
+  const headerInfo = [
+    org.address_line1 || '',
+    org.address_line2 || '',
+    org.zip_code || '',
+    'India',
+    org.phone ? `Phone: ${org.phone}` : '',
+    org.email ? `Email: ${org.email}` : '',
+    org.website ? `Website: ${org.website}` : ''
+  ].filter(Boolean);
   
-  doc.setFontSize(20);
-  doc.text('ACCOUNT STATEMENT', pageWidth - 15, 25, { align: 'right' });
-
-  doc.setFontSize(10);
-  doc.setFont('helvetica', 'normal');
-  doc.text(`Statement Period: ${format(dateRange.start, 'dd MMM yyyy')} - ${format(dateRange.end, 'dd MMM yyyy')}`, pageWidth - 15, 35, { align: 'right' });
-
-  // Student Details
-  doc.setFontSize(11);
-  doc.setFont('helvetica', 'bold');
-  doc.text('STATEMENT FOR:', 15, 60);
-  doc.setFontSize(10);
-  doc.text(`Student: ${student.studentName}`, 15, 67);
-  doc.setFont('helvetica', 'normal');
-  doc.text(student.address || 'N/A', 15, 72, { maxWidth: 80 });
-
-  // Statement Table
-  autoTable(doc, {
-    startY: 90,
-    head: [['Invoice No', 'Month', 'Amount', 'Paid', 'Balance', 'Status']],
-    body: invoices.map(inv => [
-      inv.invoiceNumber,
-      inv.month,
-      formatPDFCurrency(inv.totalAmount),
-      formatPDFCurrency(inv.paidAmount),
-      formatPDFCurrency(inv.balanceDue),
-      inv.status
-    ]),
-    headStyles: { fillColor: [124, 58, 237] }
+  headerInfo.forEach((line, i) => {
+    doc.text(line, pageWidth - 15, 15 + (i * 4), { align: 'right' });
   });
 
-  const finalY = (doc as any).lastAutoTable.finalY;
-  const totalInvoiced = invoices.reduce((sum, inv) => sum + inv.totalAmount, 0);
-  const totalPaid = invoices.reduce((sum, inv) => sum + inv.paidAmount, 0);
-  const totalOutstanding = invoices.reduce((sum, inv) => sum + inv.balanceDue, 0);
-
+  // Recipient Section
+  doc.setFontSize(10);
   doc.setFont('helvetica', 'bold');
-  doc.text('Summary:', pageWidth - 80, finalY + 15);
+  doc.text('To', 15, 55);
+  doc.setFontSize(11);
+  doc.text(student.studentName || 'Student', 15, 62);
+  doc.setFontSize(10);
   doc.setFont('helvetica', 'normal');
-  doc.text(`Total Invoiced: ${formatPDFCurrency(totalInvoiced)}`, pageWidth - 80, finalY + 22);
-  doc.text(`Total Paid: ${formatPDFCurrency(totalPaid)}`, pageWidth - 80, finalY + 27);
-  doc.setFont('helvetica', 'bold');
-  doc.text(`Total Outstanding: ${formatPDFCurrency(totalOutstanding)}`, pageWidth - 80, finalY + 35);
+  doc.text([
+    student.address || '',
+    'India'
+  ].filter(Boolean), 15, 68, { maxWidth: 80 });
 
-  doc.text('Notes: Please clear all dues at earliest. Thank you.', 15, finalY + 50);
+  // Title Section
+  doc.setFontSize(20);
+  doc.setFont('helvetica', 'bold');
+  doc.text('Statement of Accounts', pageWidth - 15, 60, { align: 'right' });
+  doc.setFontSize(10);
+  doc.setFont('helvetica', 'normal');
+  doc.text(`${formatDate(dateRange.start)} To ${formatDate(dateRange.end)}`, pageWidth - 15, 68, { align: 'right' });
+
+  // Calculations
+  const invoicedAmount = (invoices || []).reduce((sum, inv) => sum + (inv.totalAmount || 0), 0);
+  const amountReceived = (receipts || []).reduce((sum, rcp) => sum + (rcp.amountReceived || 0), 0);
+  const openingBalance = 0; 
+  const balanceDue = openingBalance + invoicedAmount - amountReceived;
+
+  // Account Summary Box
+  autoTable(doc, {
+    startY: 85,
+    margin: { left: pageWidth - 85 },
+    tableWidth: 70,
+    body: [
+      ['Opening Balance', formatRupee(openingBalance)],
+      ['Invoiced Amount', formatRupee(invoicedAmount)],
+      ['Amount Received', formatRupee(amountReceived)],
+      ['Balance Due', formatRupee(balanceDue)]
+    ],
+    theme: 'grid',
+    styles: { fontSize: 9, cellPadding: 2 },
+    columnStyles: {
+      0: { fontStyle: 'bold' },
+      1: { halign: 'right' }
+    }
+  });
+
+  // Transaction Table Data
+  const transactions: any[] = [
+    {
+      date: dateRange.start,
+      type: 'Opening Balance',
+      details: '-',
+      amount: 0,
+      payments: 0,
+      balance: 0
+    }
+  ];
+
+  // Add Invoices
+  (invoices || []).forEach(inv => {
+    const date = inv.createdAt?.toDate ? inv.createdAt.toDate() : new Date(inv.createdAt || 0);
+    transactions.push({
+      date: isNaN(date.getTime()) ? new Date() : date,
+      type: 'Invoice',
+      details: `${inv.invoiceNumber || 'INV'} (Due: ${formatDate(inv.dueDate)})`,
+      amount: inv.totalAmount || 0,
+      payments: 0
+    });
+  });
+
+  // Add Receipts
+  (receipts || []).forEach(rcp => {
+    const date = rcp.createdAt?.toDate ? rcp.createdAt.toDate() : new Date(rcp.createdAt || 0);
+    transactions.push({
+      date: isNaN(date.getTime()) ? new Date() : date,
+      type: 'Payment Received',
+      details: `${rcp.receiptNumber || 'RCP'} (Applied to: ${rcp.invoiceNumber || 'Multiple'})`,
+      amount: 0,
+      payments: rcp.amountReceived || 0
+    });
+  });
+
+  // Sort by date
+  transactions.sort((a, b) => a.date.getTime() - b.date.getTime());
+
+  // Calculate Running Balance
+  let currentBalance = 0;
+  const tableBody = transactions.map(tx => {
+    if (tx.type !== 'Opening Balance') {
+      currentBalance += tx.amount - tx.payments;
+      tx.balance = currentBalance;
+    }
+    return [
+      formatDate(tx.date),
+      tx.type,
+      tx.details,
+      tx.amount > 0 ? formatRupee(tx.amount) : '-',
+      tx.payments > 0 ? formatRupee(tx.payments) : '-',
+      formatRupee(tx.balance)
+    ];
+  });
+
+  // Transaction Table
+  const tableStartY = (doc as any).lastAutoTable ? (doc as any).lastAutoTable.finalY + 10 : 130;
+  autoTable(doc, {
+    startY: tableStartY,
+    head: [['Date', 'Transactions', 'Details', 'Amount', 'Payments', 'Balance']],
+    body: tableBody,
+    theme: 'striped',
+    headStyles: { fillColor: [243, 244, 246], textColor: [0, 0, 0], fontStyle: 'bold' },
+    styles: { fontSize: 8 },
+    columnStyles: {
+      3: { halign: 'right' },
+      4: { halign: 'right' },
+      5: { halign: 'right', fontStyle: 'bold' }
+    }
+  });
+
+  const finalY = (doc as any).lastAutoTable ? (doc as any).lastAutoTable.finalY : tableStartY + 20;
+  doc.setFontSize(10);
+  doc.setFont('helvetica', 'bold');
+  doc.text(`Balance Due ${formatRupee(balanceDue)}`, pageWidth - 15, finalY + 10, { align: 'right' });
 
   return doc;
 };

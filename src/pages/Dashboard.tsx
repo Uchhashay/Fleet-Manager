@@ -35,7 +35,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 
 export function Dashboard() {
   const [showCombined, setShowCombined] = useState(false);
-  const [timeframe, setTimeframe] = useState<'today' | 'yesterday' | 'week' | 'month' | 'custom'>('month');
+  const [timeframe, setTimeframe] = useState<'today' | 'yesterday' | 'week' | 'month' | 'year' | 'custom'>('month');
   const [customRange, setCustomRange] = useState({
     start: format(startOfMonth(new Date()), 'yyyy-MM-dd'),
     end: format(new Date(), 'yyyy-MM-dd')
@@ -83,43 +83,44 @@ export function Dashboard() {
     setLoading(true);
     try {
       const now = new Date();
-      const sixMonthsAgo = subMonths(startOfMonth(now), 5);
-      const sixMonthsAgoStr = format(sixMonthsAgo, 'yyyy-MM-dd');
-      const nowStr = format(endOfMonth(now), 'yyyy-MM-dd');
+      // Fetch data from the start of the previous year to cover "This Year" and "Custom" ranges better
+      const startOfData = startOfMonth(subMonths(now, 24)); 
+      const startOfDataStr = format(startOfData, 'yyyy-MM-dd');
+      const endOfDataStr = format(endOfMonth(now), 'yyyy-MM-dd');
 
       // Fetch Accountants
       const accountantsSnap = await getDocs(query(collection(db, 'profiles'), where('role', '==', 'accountant')));
       const accIds = accountantsSnap.docs.map(doc => doc.id);
       setAccountantIds(accIds);
 
-      // 1. Fetch Daily Records for last 6 months
+      // 1. Fetch Daily Records
       const recordsSnap = await getDocs(query(
         collection(db, 'daily_records'),
-        where('date', '>=', sixMonthsAgoStr),
-        where('date', '<=', nowStr)
+        where('date', '>=', startOfDataStr),
+        where('date', '<=', endOfDataStr)
       ));
       const records = recordsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
 
-      // 2. Fetch Bus Expenses for last 6 months
+      // 2. Fetch Bus Expenses
       const busExpensesSnap = await getDocs(query(
         collection(db, 'bus_expenses'),
-        where('date', '>=', sixMonthsAgoStr),
-        where('date', '<=', nowStr)
+        where('date', '>=', startOfDataStr),
+        where('date', '<=', endOfDataStr)
       ));
       const busExpenses = busExpensesSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
 
-      // 3. Fetch Company Expenses for last 6 months
+      // 3. Fetch Company Expenses
       const companyExpensesSnap = await getDocs(query(
         collection(db, 'company_expenses'),
-        where('date', '>=', sixMonthsAgoStr),
-        where('date', '<=', nowStr)
+        where('date', '>=', startOfDataStr),
+        where('date', '<=', endOfDataStr)
       ));
       const companyExpenses = companyExpensesSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
 
-      // 4. Fetch Fee Collections for last 6 months
+      // 4. Fetch Fee Collections
       const feeCollectionsSnap = await getDocs(query(
         collection(db, 'fee_collections'),
-        where('date', '>=', Timestamp.fromDate(sixMonthsAgo)),
+        where('date', '>=', Timestamp.fromDate(startOfData)),
         where('date', '<=', Timestamp.fromDate(now))
       ));
       const feeCollections = feeCollectionsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
@@ -205,6 +206,10 @@ export function Dashboard() {
         startDate = startOfMonth(now);
         endDate = endOfMonth(now);
         break;
+      case 'year':
+        startDate = new Date(now.getFullYear(), 0, 1);
+        endDate = new Date(now.getFullYear(), 11, 31, 23, 59, 59);
+        break;
       case 'custom':
         startDate = startOfDay(new Date(customRange.start));
         endDate = endOfDay(new Date(customRange.end));
@@ -286,39 +291,158 @@ export function Dashboard() {
     });
     setBusStats(busComparison);
 
-    // Revenue vs Expense Chart (Last 6 months)
-    const months = Array.from({ length: 6 }, (_, i) => subMonths(new Date(), i)).reverse();
-    const chart = months.map(month => {
-      const start = format(startOfMonth(month), 'yyyy-MM-dd');
-      const end = format(endOfMonth(month), 'yyyy-MM-dd');
+    // Revenue vs Expense Chart (Dynamic based on timeframe)
+    let chart: any[] = [];
+    const diffInDays = Math.ceil((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24));
 
-      const rs = records.filter((r: any) => r.date >= start && r.date <= end);
-      const be = busExpenses.filter((e: any) => e.date >= start && e.date <= end);
-      const ce = companyExpenses.filter((e: any) => e.date >= start && e.date <= end);
-      const ct = cashTransactions.filter((t: any) => t.date >= start && t.date <= end);
-      const fc = feeCollections.filter((f: any) => {
-        const date = f.date instanceof Timestamp ? f.date.toDate() : new Date(f.date);
-        return date >= startOfMonth(month) && date <= endOfMonth(month);
+    if (timeframe === 'today' || timeframe === 'yesterday' || (timeframe === 'custom' && diffInDays <= 1)) {
+      // Show hourly or just the day? For now, let's show the last 7 days trend to give context
+      const days = Array.from({ length: 7 }, (_, i) => subDays(endDate, 6 - i));
+      chart = days.map(day => {
+        const dStr = format(day, 'yyyy-MM-dd');
+        const rs = records.filter((r: any) => r.date === dStr);
+        const be = busExpenses.filter((e: any) => e.date === dStr);
+        const ce = companyExpenses.filter((e: any) => e.date === dStr);
+        const ct = cashTransactions.filter((t: any) => t.date === dStr);
+        const fc = feeCollections.filter((f: any) => {
+          const date = f.date instanceof Timestamp ? f.date.toDate() : new Date(f.date);
+          return format(date, 'yyyy-MM-dd') === dStr;
+        });
+
+        const school = rs.reduce((sum, r: any) => sum + (r.school_morning || 0) + (r.school_evening || 0), 0);
+        const charter = rs.reduce((sum, r: any) => sum + (r.charter_morning || 0) + (r.charter_evening || 0), 0);
+        const private_booking = rs.reduce((sum, r: any) => sum + (r.private_booking || 0), 0);
+        const fees = fc.reduce((sum, f: any) => sum + (f.amount || 0), 0);
+
+        const totalExp = rs.reduce((sum, r: any) => sum + (r.fuel_amount || 0) + (r.driver_duty_paid || 0) + (r.helper_duty_paid || 0), 0) + 
+                         be.reduce((sum, e: any) => sum + (e.amount || 0), 0) + 
+                         ce.reduce((sum, e: any) => sum + (e.amount || 0), 0) +
+                         ct.filter((t: any) => ['salary', 'salary_advance', 'duty_payment', 'misc'].includes(t.category) && t.type === 'out').reduce((sum, t: any) => sum + (t.amount || 0), 0);
+
+        return {
+          name: format(day, 'dd MMM'),
+          school,
+          charter,
+          private: private_booking + fees + ct.filter((t: any) => t.type === 'in' && t.category === 'misc').reduce((sum, t: any) => sum + (t.amount || 0), 0),
+          totalExpenses: totalExp
+        };
       });
+    } else if (timeframe === 'week' || (timeframe === 'custom' && diffInDays <= 7)) {
+      // Show days of the week
+      const days = Array.from({ length: diffInDays + 1 }, (_, i) => {
+        const d = new Date(startDate);
+        d.setDate(d.getDate() + i);
+        return d;
+      });
+      chart = days.map(day => {
+        const dStr = format(day, 'yyyy-MM-dd');
+        const rs = records.filter((r: any) => r.date === dStr);
+        const be = busExpenses.filter((e: any) => e.date === dStr);
+        const ce = companyExpenses.filter((e: any) => e.date === dStr);
+        const ct = cashTransactions.filter((t: any) => t.date === dStr);
+        const fc = feeCollections.filter((f: any) => {
+          const date = f.date instanceof Timestamp ? f.date.toDate() : new Date(f.date);
+          return format(date, 'yyyy-MM-dd') === dStr;
+        });
 
-      const school = rs.reduce((sum, r: any) => sum + (r.school_morning || 0) + (r.school_evening || 0), 0);
-      const charter = rs.reduce((sum, r: any) => sum + (r.charter_morning || 0) + (r.charter_evening || 0), 0);
-      const private_booking = rs.reduce((sum, r: any) => sum + (r.private_booking || 0), 0);
-      const fees = fc.reduce((sum, f: any) => sum + (f.amount || 0), 0);
+        const school = rs.reduce((sum, r: any) => sum + (r.school_morning || 0) + (r.school_evening || 0), 0);
+        const charter = rs.reduce((sum, r: any) => sum + (r.charter_morning || 0) + (r.charter_evening || 0), 0);
+        const private_booking = rs.reduce((sum, r: any) => sum + (r.private_booking || 0), 0);
+        const fees = fc.reduce((sum, f: any) => sum + (f.amount || 0), 0);
 
-      const totalExp = rs.reduce((sum, r: any) => sum + (r.fuel_amount || 0) + (r.driver_duty_paid || 0) + (r.helper_duty_paid || 0), 0) + 
-                       be.reduce((sum, e: any) => sum + (e.amount || 0), 0) + 
-                       ce.reduce((sum, e: any) => sum + (e.amount || 0), 0) +
-                       ct.filter((t: any) => ['salary', 'salary_advance', 'duty_payment', 'misc'].includes(t.category) && t.type === 'out').reduce((sum, t: any) => sum + (t.amount || 0), 0);
+        const totalExp = rs.reduce((sum, r: any) => sum + (r.fuel_amount || 0) + (r.driver_duty_paid || 0) + (r.helper_duty_paid || 0), 0) + 
+                         be.reduce((sum, e: any) => sum + (e.amount || 0), 0) + 
+                         ce.reduce((sum, e: any) => sum + (e.amount || 0), 0) +
+                         ct.filter((t: any) => ['salary', 'salary_advance', 'duty_payment', 'misc'].includes(t.category) && t.type === 'out').reduce((sum, t: any) => sum + (t.amount || 0), 0);
 
-      return {
-        name: format(month, 'MMM'),
-        school,
-        charter,
-        private: private_booking + fees + ct.filter((t: any) => t.type === 'in' && t.category === 'misc').reduce((sum, t: any) => sum + (t.amount || 0), 0),
-        totalExpenses: totalExp
-      };
-    });
+        return {
+          name: format(day, 'EEE'),
+          school,
+          charter,
+          private: private_booking + fees + ct.filter((t: any) => t.type === 'in' && t.category === 'misc').reduce((sum, t: any) => sum + (t.amount || 0), 0),
+          totalExpenses: totalExp
+        };
+      });
+    } else if (timeframe === 'month' || (timeframe === 'custom' && diffInDays <= 31)) {
+      // Show weekly breakdown for the month
+      const weeks = Array.from({ length: 4 }, (_, i) => {
+        const start = new Date(startDate);
+        start.setDate(start.getDate() + (i * 7));
+        const end = new Date(start);
+        end.setDate(end.getDate() + 6);
+        return { start, end };
+      });
+      chart = weeks.map((week, idx) => {
+        const startStr = format(week.start, 'yyyy-MM-dd');
+        const endStr = format(week.end, 'yyyy-MM-dd');
+
+        const rs = records.filter((r: any) => r.date >= startStr && r.date <= endStr);
+        const be = busExpenses.filter((e: any) => e.date >= startStr && e.date <= endStr);
+        const ce = companyExpenses.filter((e: any) => e.date >= startStr && e.date <= endStr);
+        const ct = cashTransactions.filter((t: any) => t.date >= startStr && t.date <= endStr);
+        const fc = feeCollections.filter((f: any) => {
+          const date = f.date instanceof Timestamp ? f.date.toDate() : new Date(f.date);
+          return date >= week.start && date <= week.end;
+        });
+
+        const school = rs.reduce((sum, r: any) => sum + (r.school_morning || 0) + (r.school_evening || 0), 0);
+        const charter = rs.reduce((sum, r: any) => sum + (r.charter_morning || 0) + (r.charter_evening || 0), 0);
+        const private_booking = rs.reduce((sum, r: any) => sum + (r.private_booking || 0), 0);
+        const fees = fc.reduce((sum, f: any) => sum + (f.amount || 0), 0);
+
+        const totalExp = rs.reduce((sum, r: any) => sum + (r.fuel_amount || 0) + (r.driver_duty_paid || 0) + (r.helper_duty_paid || 0), 0) + 
+                         be.reduce((sum, e: any) => sum + (e.amount || 0), 0) + 
+                         ce.reduce((sum, e: any) => sum + (e.amount || 0), 0) +
+                         ct.filter((t: any) => ['salary', 'salary_advance', 'duty_payment', 'misc'].includes(t.category) && t.type === 'out').reduce((sum, t: any) => sum + (t.amount || 0), 0);
+
+        return {
+          name: `Week ${idx + 1}`,
+          school,
+          charter,
+          private: private_booking + fees + ct.filter((t: any) => t.type === 'in' && t.category === 'misc').reduce((sum, t: any) => sum + (t.amount || 0), 0),
+          totalExpenses: totalExp
+        };
+      });
+    } else {
+      // Show monthly breakdown (for Year or long Custom)
+      const monthsCount = timeframe === 'year' ? 12 : Math.ceil(diffInDays / 30);
+      const months = Array.from({ length: monthsCount }, (_, i) => {
+        const d = new Date(startDate);
+        d.setMonth(d.getMonth() + i);
+        return d;
+      });
+      chart = months.map(month => {
+        const start = format(startOfMonth(month), 'yyyy-MM-dd');
+        const end = format(endOfMonth(month), 'yyyy-MM-dd');
+
+        const rs = records.filter((r: any) => r.date >= start && r.date <= end);
+        const be = busExpenses.filter((e: any) => e.date >= start && e.date <= end);
+        const ce = companyExpenses.filter((e: any) => e.date >= start && e.date <= end);
+        const ct = cashTransactions.filter((t: any) => t.date >= start && t.date <= end);
+        const fc = feeCollections.filter((f: any) => {
+          const date = f.date instanceof Timestamp ? f.date.toDate() : new Date(f.date);
+          return date >= startOfMonth(month) && date <= endOfMonth(month);
+        });
+
+        const school = rs.reduce((sum, r: any) => sum + (r.school_morning || 0) + (r.school_evening || 0), 0);
+        const charter = rs.reduce((sum, r: any) => sum + (r.charter_morning || 0) + (r.charter_evening || 0), 0);
+        const private_booking = rs.reduce((sum, r: any) => sum + (r.private_booking || 0), 0);
+        const fees = fc.reduce((sum, f: any) => sum + (f.amount || 0), 0);
+
+        const totalExp = rs.reduce((sum, r: any) => sum + (r.fuel_amount || 0) + (r.driver_duty_paid || 0) + (r.helper_duty_paid || 0), 0) + 
+                         be.reduce((sum, e: any) => sum + (e.amount || 0), 0) + 
+                         ce.reduce((sum, e: any) => sum + (e.amount || 0), 0) +
+                         ct.filter((t: any) => ['salary', 'salary_advance', 'duty_payment', 'misc'].includes(t.category) && t.type === 'out').reduce((sum, t: any) => sum + (t.amount || 0), 0);
+
+        return {
+          name: format(month, 'MMM'),
+          school,
+          charter,
+          private: private_booking + fees + ct.filter((t: any) => t.type === 'in' && t.category === 'misc').reduce((sum, t: any) => sum + (t.amount || 0), 0),
+          totalExpenses: totalExp
+        };
+      });
+    }
     setChartData(chart);
 
     // Expense Breakdown Donut
@@ -390,6 +514,7 @@ export function Dashboard() {
                 { id: 'yesterday', label: 'Yesterday' },
                 { id: 'week', label: 'Week' },
                 { id: 'month', label: 'Month' },
+                { id: 'year', label: 'Year' },
                 { id: 'custom', label: 'Custom' },
               ].map((tf) => (
                 <button
@@ -482,6 +607,7 @@ export function Dashboard() {
                    timeframe === 'yesterday' ? format(subDays(new Date(), 1), 'dd MMM yyyy') : 
                    timeframe === 'week' ? `${format(startOfWeek(new Date(), { weekStartsOn: 1 }), 'dd MMM')} - ${format(endOfWeek(new Date(), { weekStartsOn: 1 }), 'dd MMM')}` : 
                    timeframe === 'month' ? format(new Date(), 'MMMM yyyy') : 
+                   timeframe === 'year' ? format(new Date(), 'yyyy') :
                    `${format(new Date(customRange.start), 'dd MMM')} - ${format(new Date(customRange.end), 'dd MMM')}`}
                 </span>
               </div>
@@ -599,16 +725,27 @@ export function Dashboard() {
 
             <div className="space-y-3">
               <div className="flex justify-between text-xs">
-                <span className="text-secondary font-medium">Monthly Efficiency</span>
-                <span className="font-mono font-bold text-primary">
-                  {Math.round((bus.expenses / bus.collections) * 100) || 0}%
+                <span className="text-secondary font-medium">Profitability</span>
+                <span className={cn(
+                  "font-mono font-bold",
+                  (bus.collections - bus.expenses) >= 0 ? "text-success" : "text-danger"
+                )}>
+                  {bus.collections > 0 
+                    ? Math.round(((bus.collections - bus.expenses) / bus.collections) * 100) 
+                    : (bus.expenses > 0 ? -100 : 0)}%
                 </span>
               </div>
               <div className="h-1.5 w-full bg-border rounded-full overflow-hidden">
                 <motion.div 
                   initial={{ width: 0 }}
-                  animate={{ width: `${Math.min(100, (bus.expenses / bus.collections) * 100)}%` }}
-                  className="h-full bg-accent" 
+                  animate={{ 
+                    width: `${Math.max(0, Math.min(100, bus.collections > 0 ? ((bus.collections - bus.expenses) / bus.collections) * 100 : 0))}%` 
+                  }}
+                  className={cn(
+                    "h-full transition-colors duration-500",
+                    (bus.collections - bus.expenses) / bus.collections > 0.5 ? "bg-success" :
+                    (bus.collections - bus.expenses) / bus.collections > 0 ? "bg-warning" : "bg-danger"
+                  )} 
                 />
               </div>
               <div className="flex justify-between text-[10px] text-secondary font-mono">
