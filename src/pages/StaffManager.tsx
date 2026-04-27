@@ -7,6 +7,7 @@ import { UserPlus, Trash2, Edit2, X, Save, Users, Briefcase, IndianRupee, Clock,
 import { motion, AnimatePresence } from 'framer-motion';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
+import { handleFirestoreError, OperationType } from '../lib/firebase-utils';
 import { logActivity } from '../lib/activity-logger';
 
 export function StaffManager() {
@@ -29,10 +30,7 @@ export function StaffManager() {
       const staffList = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Staff));
       setStaff(staffList);
       setLoading(false);
-    }, (error) => {
-      console.error('Error fetching staff:', error);
-      setLoading(false);
-    });
+    }, (error) => handleFirestoreError(error, OperationType.LIST, 'staff'));
 
     return () => unsubscribe();
   }, []);

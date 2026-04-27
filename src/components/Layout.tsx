@@ -102,6 +102,17 @@ export function Layout() {
       ]
     },
     { 
+      label: 'Booking', 
+      icon: Calendar, 
+      roles: ['admin', 'accountant', 'developer'],
+      children: [
+        { label: 'All Bookings', path: '/booking/all', icon: FileText },
+        { label: 'Hirer Directory', path: '/booking/hirers', icon: Users },
+        { label: 'Calendar View', path: '/booking/calendar', icon: Calendar },
+        { label: 'Bills', path: '/booking/bills', icon: FileText },
+      ]
+    },
+    { 
       label: 'Monthly', 
       path: '/monthly', 
       icon: Calendar, 

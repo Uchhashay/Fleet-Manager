@@ -53,7 +53,7 @@ import { InvoiceViewModal } from '../components/InvoiceViewModal';
 import { ReceiptDetailModal } from '../components/ReceiptDetailModal';
 import { EditInvoiceModal } from '../components/EditInvoiceModal';
 import { motion, AnimatePresence } from 'framer-motion';
-import { format, startOfMonth, endOfMonth, isAfter, isBefore, addDays, parse, isValid } from 'date-fns';
+import { format, startOfMonth, endOfMonth, isAfter, isBefore, addDays, parse, isValid, endOfDay } from 'date-fns';
 import { generateInvoicePDF, generateReceiptPDF } from '../lib/pdf-service';
 import { amountToWordsIndian } from '../lib/number-utils';
 
@@ -149,7 +149,7 @@ export function InvoiceReceipt() {
       const today = new Date();
       const overdueInvoices = invoices.filter(inv => 
         (inv.status === 'UNPAID' || inv.status === 'SENT') && 
-        isBefore(inv.dueDate.toDate(), today)
+        isAfter(today, endOfDay(inv.dueDate.toDate()))
       );
 
       if (overdueInvoices.length === 0) return;
@@ -186,18 +186,24 @@ export function InvoiceReceipt() {
     const today = new Date();
     const next30Days = addDays(today, 30);
     
+    const overdue = invoices.filter(inv => 
+      inv.status !== 'PAID' && inv.dueDate && 
+      (inv.status === 'OVERDUE' || isAfter(today, endOfDay(inv.dueDate.toDate())))
+    ).reduce((sum, inv) => sum + inv.balanceDue, 0);
+
     const dueToday = invoices.filter(inv => 
-      inv.status !== 'PAID' && 
+      inv.status !== 'PAID' && inv.dueDate &&
+      !isAfter(today, endOfDay(inv.dueDate.toDate())) &&
       format(inv.dueDate.toDate(), 'yyyy-MM-dd') === format(today, 'yyyy-MM-dd')
     ).reduce((sum, inv) => sum + inv.balanceDue, 0);
 
     const due30Days = invoices.filter(inv => 
-      inv.status !== 'PAID' && 
+      inv.status !== 'PAID' && inv.dueDate &&
+      !isAfter(today, endOfDay(inv.dueDate.toDate())) &&
+      format(inv.dueDate.toDate(), 'yyyy-MM-dd') !== format(today, 'yyyy-MM-dd') &&
       isBefore(inv.dueDate.toDate(), next30Days) && 
       isAfter(inv.dueDate.toDate(), today)
     ).reduce((sum, inv) => sum + inv.balanceDue, 0);
-
-    const overdue = invoices.filter(inv => inv.status === 'OVERDUE').reduce((sum, inv) => sum + inv.balanceDue, 0);
 
     return { outstanding, dueToday, due30Days, overdue };
   }, [invoices]);
@@ -441,6 +447,7 @@ export function InvoiceReceipt() {
                     <th>Student</th>
                     <th>School & Stand</th>
                     <th>Month</th>
+                    <th>Due Date</th>
                     <th>Amount</th>
                     <th>Balance</th>
                     <th>Status</th>
@@ -488,6 +495,7 @@ export function InvoiceReceipt() {
                         </div>
                       </td>
                       <td className="text-xs font-bold text-primary">{inv.month}</td>
+                      <td className="text-xs text-secondary">{inv.dueDate ? format(inv.dueDate.toDate(), 'dd MMM yyyy') : '-'}</td>
                       <td className="font-bold text-primary">{formatCurrency(inv.totalAmount)}</td>
                       <td className={cn("font-black", inv.balanceDue > 0 ? "text-danger" : "text-success")}>
                         {formatCurrency(inv.balanceDue)}
@@ -742,6 +750,7 @@ export function InvoiceReceipt() {
 
 function RaiseInvoicesModal({ isOpen, onClose, students, profile }: { isOpen: boolean, onClose: () => void, students: Student[], profile: any }) {
   const [selectedMonth, setSelectedMonth] = useState(format(new Date(), 'MMMM yyyy'));
+  const [dueDate, setDueDate] = useState(format(endOfMonth(new Date()), 'yyyy-MM-dd'));
   const [selectedStudents, setSelectedStudents] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -753,7 +762,17 @@ function RaiseInvoicesModal({ isOpen, onClose, students, profile }: { isOpen: bo
   const [searchTerm, setSearchTerm] = useState('');
   const [batchDescription, setBatchDescription] = useState('');
   const [batchTerms, setBatchTerms] = useState('Due on Receipt');
-  
+
+  // Update default due date when month changes
+  useEffect(() => {
+    const monthDate = parse(selectedMonth, 'MMMM yyyy', new Date());
+    if (isValid(monthDate)) {
+      // Default due date: 10th of the next month
+      const nextMonth = new Date(monthDate.getFullYear(), monthDate.getMonth() + 1, 10);
+      setDueDate(format(nextMonth, 'yyyy-MM-dd'));
+    }
+  }, [selectedMonth]);
+
   // Individual customizations: studentId -> { description, terms, schoolName, feeAmount, concession }
   const [customizations, setCustomizations] = useState<Record<string, { description?: string, terms?: string, schoolName?: string, feeAmount?: number, concession?: number }>>({});
   const [editingCustomizationId, setEditingCustomizationId] = useState<string | null>(null);
@@ -809,7 +828,7 @@ function RaiseInvoicesModal({ isOpen, onClose, students, profile }: { isOpen: bo
     try {
       const batch = writeBatch(db);
       const invoiceDate = serverTimestamp();
-      const dueDate = Timestamp.fromDate(endOfMonth(new Date()));
+      const finalDueDate = Timestamp.fromDate(parse(dueDate, 'yyyy-MM-dd', new Date()));
       
       let finalSelectedStudents: string[] = [];
 
@@ -878,7 +897,7 @@ function RaiseInvoicesModal({ isOpen, onClose, students, profile }: { isOpen: bo
           address: student.address,
           phoneNumber: student.phoneNumber,
           invoiceDate,
-          dueDate,
+          dueDate: finalDueDate,
           month: selectedMonth,
           feeAmount: currentFeeAmount,
           profileConcession: student.concession,
@@ -1051,6 +1070,15 @@ function RaiseInvoicesModal({ isOpen, onClose, students, profile }: { isOpen: bo
                   return <option key={m} value={m}>{m}</option>;
                 })}
               </select>
+            </div>
+            <div className="space-y-2">
+              <label className="label">Due Date</label>
+              <input
+                type="date"
+                value={dueDate}
+                onChange={(e) => setDueDate(e.target.value)}
+                className="input w-full bg-background"
+              />
             </div>
             <div className="space-y-2">
               <label className="label">Filter School</label>

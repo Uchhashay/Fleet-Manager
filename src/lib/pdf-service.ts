@@ -1,7 +1,7 @@
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { format } from 'date-fns';
-import { Invoice, Receipt, Student, Organization } from '../types';
+import { Invoice, Receipt, Student, Organization, Booking, BookingPayment } from '../types';
 import { amountToWordsIndian } from './number-utils';
 
 const formatPDFCurrency = (amount: number) => {
@@ -9,6 +9,240 @@ const formatPDFCurrency = (amount: number) => {
     maximumFractionDigits: 0,
   }).format(amount);
 };
+
+export const generateDutySlipPDF = (booking: Booking, payments: BookingPayment[], org: Organization) => {
+  const doc = new jsPDF();
+  const pageWidth = doc.internal.pageSize.width;
+  const pageHeight = doc.internal.pageSize.height;
+  const primaryColor = [79, 70, 229]; // Indigo #4F46E5
+
+  // 1. Modern Header
+  doc.setFillColor(249, 250, 251);
+  doc.rect(0, 0, pageWidth, 45, 'F');
+  
+  if (org.logo_url) {
+    try {
+      doc.addImage(org.logo_url, 'PNG', 15, 10, 25, 25);
+    } catch (e) {
+      console.error('PDF Logo Error:', e);
+    }
+  }
+
+  doc.setTextColor(17, 24, 39);
+  doc.setFontSize(22);
+  doc.setFont('helvetica', 'bold');
+  doc.text(org.name || 'JAGRITI TOURS & TRAVELS', 45, 20);
+  
+  doc.setFontSize(9);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(107, 114, 128);
+  const orgSubtext = [
+    org.address_line1 || 'E-10, Gali No-6, Tomar Colony, Burari',
+    `${org.address_line2 || 'Delhi'} - ${org.zip_code || '110084'}`,
+    `PH: ${org.phone || ''} | EMAIL: ${org.email || ''}`
+  ].join(' | ');
+  doc.text(orgSubtext, 45, 26);
+  doc.text(`WEBSITE: ${org.website || 'www.jagrititoursandtravels.com'}`, 45, 31);
+
+  // DUTY SLIP Badge
+  doc.setFillColor(primaryColor[0], primaryColor[1], primaryColor[2]);
+  doc.roundedRect(pageWidth - 55, 12, 40, 12, 2, 2, 'F');
+  doc.setTextColor(255, 255, 255);
+  doc.setFontSize(12);
+  doc.setFont('helvetica', 'bold');
+  doc.text('DUTY SLIP', pageWidth - 35, 20, { align: 'center' });
+
+  // 2. Slip Metadata
+  let currentY = 55;
+  doc.setTextColor(17, 24, 39);
+  doc.setFontSize(10);
+  doc.setFont('helvetica', 'bold');
+  doc.text(`SLIP NUMBER: #${booking.dutySlipNumber}`, 15, currentY);
+  
+  const formatDate = (ts: any) => {
+    if (!ts) return '-';
+    try {
+      const d = ts.toDate ? ts.toDate() : new Date(ts);
+      return format(d, 'dd MMM yyyy');
+    } catch(e) { return '-'; }
+  };
+
+  const bookingDate = booking.bookingDate || booking.createdAt;
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(107, 114, 128);
+  doc.text(`DATE: ${formatDate(bookingDate)}`, 15, currentY + 6);
+
+  // Status Badge
+  const status = (booking.status || 'PENDING').toUpperCase();
+  doc.setFillColor(243, 244, 246);
+  doc.roundedRect(pageWidth - 50, currentY - 5, 35, 8, 4, 4, 'F');
+  doc.setTextColor(75, 85, 99);
+  doc.setFontSize(8);
+  doc.setFont('helvetica', 'bold');
+  doc.text(status, pageWidth - 32.5, currentY + 0.5, { align: 'center' });
+
+  // 3. Main Info Sections (Side-by-Side Boxes)
+  currentY += 18;
+  const boxWidth = (pageWidth - 40) / 2;
+  const boxHeight = 75;
+
+  // Hirer Box
+  doc.setFillColor(249, 250, 251);
+  doc.roundedRect(15, currentY, boxWidth, boxHeight, 2, 2, 'F');
+  doc.setTextColor(primaryColor[0], primaryColor[1], primaryColor[2]);
+  doc.setFontSize(8);
+  doc.text('HIRER DETAILS', 20, currentY + 8);
+
+  doc.setFontSize(10);
+  doc.setTextColor(17, 24, 39);
+  let ly = currentY + 18;
+  
+  doc.setFont('helvetica', 'bold');
+  doc.text(booking.hirerName || '-', 20, ly);
+  ly += 6;
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(107, 114, 128);
+  doc.text(`Contact: ${booking.contactNumber || '-'}`, 20, ly);
+  
+  if (booking.alternateContactNumber && booking.alternateContactNumber.trim()) {
+    ly += 5;
+    doc.text(`Alt: ${booking.alternateContactNumber}`, 20, ly);
+  }
+
+  ly += 7;
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(17, 24, 39);
+  doc.text('Address:', 20, ly);
+  ly += 5;
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(107, 114, 128);
+  const addrLines = doc.splitTextToSize(booking.address || '-', boxWidth - 10);
+  doc.text(addrLines, 20, ly);
+  
+  // Trip Info Box
+  doc.setFillColor(249, 250, 251);
+  doc.roundedRect(pageWidth / 2 + 5, currentY, boxWidth, boxHeight, 2, 2, 'F');
+  doc.setTextColor(primaryColor[0], primaryColor[1], primaryColor[2]);
+  doc.setFontSize(8);
+  doc.text('TRIP INFORMATION', pageWidth / 2 + 10, currentY + 8);
+
+  doc.setFontSize(10);
+  let ry = currentY + 18;
+  
+  doc.setTextColor(17, 24, 39);
+  doc.setFont('helvetica', 'bold');
+  doc.text('DEPARTURE:', pageWidth / 2 + 10, ry);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(107, 114, 128);
+  doc.text(`${formatDate(booking.departureDate)} @ ${booking.departureTime || '-'}`, pageWidth / 2 + 10, ry + 5);
+
+  ry += 13;
+  doc.setTextColor(17, 24, 39);
+  doc.setFont('helvetica', 'bold');
+  doc.text('ARRIVAL:', pageWidth / 2 + 10, ry);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(107, 114, 128);
+  doc.text(`${formatDate(booking.arrivalDate)} @ ${booking.arrivalTime || '-'}`, pageWidth / 2 + 10, ry + 5);
+
+  ry += 13;
+  doc.setTextColor(17, 24, 39);
+  doc.setFont('helvetica', 'bold');
+  doc.text('PICKUP POINT:', pageWidth / 2 + 10, ry);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(primaryColor[0], primaryColor[1], primaryColor[2]);
+  doc.text((booking.pickupPoint || 'N/A').toUpperCase(), pageWidth / 2 + 10, ry + 5);
+
+  ry += 13;
+  doc.setTextColor(17, 24, 39);
+  doc.setFont('helvetica', 'bold');
+  doc.text('DESTINATION:', pageWidth / 2 + 10, ry);
+  doc.setFont('helvetica', 'normal');
+  doc.text((booking.destination || 'N/A').toUpperCase(), pageWidth / 2 + 10, ry + 5);
+
+  // 4. Vehicle & Payment Banner
+  currentY += boxHeight + 10;
+  doc.setFillColor(243, 244, 246);
+  doc.roundedRect(15, currentY, pageWidth - 30, 25, 2, 2, 'F');
+  
+  doc.setTextColor(107, 114, 128);
+  doc.setFontSize(8);
+  doc.text('VEHICLE & FLEET', 20, currentY + 8);
+  doc.text('FINANCIAL SUMMARY', pageWidth / 2 + 5, currentY + 8);
+
+  doc.setTextColor(17, 24, 39);
+  doc.setFontSize(10);
+  doc.setFont('helvetica', 'bold');
+  doc.text(`Required: ${booking.vehicleRequired || '-'}`, 20, currentY + 16);
+  
+  if (booking.vehicleName) {
+    doc.text(`Assigned: ${booking.vehicleName}`, 20, currentY + 21);
+  }
+
+  doc.text(`Total Amt: Rupee ${new Intl.NumberFormat('en-IN').format(booking.finalAmount)}`, pageWidth / 2 + 5, currentY + 16);
+  if (booking.balanceDue > 0) {
+    doc.setTextColor(220, 38, 38);
+  } else {
+    doc.setTextColor(22, 163, 74);
+  }
+  doc.text(`Balance Due: Rupee ${new Intl.NumberFormat('en-IN').format(booking.balanceDue)}`, pageWidth / 2 + 5, currentY + 21);
+
+  // 5. Payment History Table (If any)
+  if (payments.length > 0) {
+    currentY += 35;
+    doc.setTextColor(17, 24, 39);
+    doc.setFontSize(9);
+    doc.setFont('helvetica', 'bold');
+    doc.text('PAYMENT HISTORY', 15, currentY);
+    
+    autoTable(doc, {
+      startY: currentY + 4,
+      head: [['Date', 'Mode', 'Amount', 'Received By']],
+      body: payments.map(p => [
+        formatDate(p.paymentDate),
+        p.paymentMode,
+        `Rs. ${p.amount}`,
+        p.receivedBy
+      ]),
+      theme: 'striped',
+      headStyles: { fillColor: [79, 70, 229], textColor: [255, 255, 255] },
+      styles: { fontSize: 8 },
+      margin: { left: 15, right: 15 }
+    });
+    currentY = (doc as any).lastAutoTable.finalY + 10;
+  } else {
+    currentY += 35;
+  }
+
+  // 6. Terms & Signatures
+  doc.setFontSize(8);
+  doc.setTextColor(107, 114, 128);
+  doc.text('TERMS & CONDITIONS:', 15, currentY);
+  const terms = [
+    '1. Parking, Toll, State Tax to be paid by hirer.',
+    '2. Extra Km will be charged after 250km/day.',
+    '3. Driver allowance extra as per duty.',
+    '4. Full payment required before trip ends.'
+  ];
+  terms.forEach((t, i) => doc.text(t, 15, currentY + 5 + (i * 4)));
+
+  const sigY = pageHeight - 40;
+  doc.line(15, sigY, 70, sigY);
+  doc.text('HIRER SIGNATURE', 42.5, sigY + 5, { align: 'center' });
+
+  doc.line(pageWidth - 70, sigY, pageWidth - 15, sigY);
+  doc.setFont('helvetica', 'bold');
+  doc.text('FOR JAGRITI TOURS & TRAVELS', pageWidth - 42.5, sigY - 10, { align: 'center' });
+  doc.setFont('helvetica', 'normal');
+  doc.text('AUTHORIZED SIGNATORY', pageWidth - 42.5, sigY + 5, { align: 'center' });
+
+  // Footer Tag
+  doc.setFontSize(6);
+  doc.setTextColor(209, 213, 219);
+  doc.text(`SLIP V2.1 | GENERATED ON ${format(new Date(), 'dd-MM-yyyy HH:mm')}`, pageWidth / 2, pageHeight - 10, { align: 'center' });
+
+  return doc;
+};
+
 
 export const generateInvoicePDF = (invoice: Invoice, org: Organization) => {
   const doc = new jsPDF();

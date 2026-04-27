@@ -79,17 +79,19 @@ service cloud.firestore {
     function isAdmin() {
       return isAuthenticated() && 
         (
-          (request.auth.token.email == "dhruvsingh349@gmail.com") ||
+          request.auth.token.email == "dhruvsingh349@gmail.com" ||
           (exists(/databases/$(database)/documents/profiles/$(request.auth.uid)) && 
-           (get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data.role == 'admin' ||
-            get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data.role == 'developer'))
+           get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data.role in ['admin', 'developer'])
         );
     }
 
     function isAccountant() {
       return isAuthenticated() && 
-        exists(/databases/$(database)/documents/profiles/$(request.auth.uid)) &&
-        get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data.role == 'accountant';
+        (
+          request.auth.token.email == "dhruvsingh349@gmail.com" ||
+          (exists(/databases/$(database)/documents/profiles/$(request.auth.uid)) && 
+           get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data.role in ['accountant', 'admin', 'developer'])
+        );
     }
 
     function isStaff() {
@@ -209,6 +211,12 @@ service cloud.firestore {
     match /settings/{settingId} {
       allow read: if isAuthenticated();
       allow write: if isAdmin();
+      
+      // Support subcollections under settings
+      match /{allSubcollections=**} {
+        allow read: if isAuthenticated();
+        allow write: if isAdmin();
+      }
     }
 
     match /schools/{schoolId} {
@@ -220,6 +228,45 @@ service cloud.firestore {
       allow read: if isAdmin();
       allow create: if isAuthenticated();
       allow update, delete: if isAdmin();
+    }
+
+    match /hirers/{hirerId} {
+      allow read: if isAuthenticated() && (isAdmin() || isAccountant());
+      allow create, update: if isAuthenticated() && (isAdmin() || isAccountant());
+      allow delete: if isAdmin();
+    }
+
+    match /bookings/{bookingId} {
+      allow read: if isAuthenticated() && (isAdmin() || isAccountant());
+      allow create: if isAuthenticated() && (isAdmin() || isAccountant());
+      allow update: if isAuthenticated() && (isAdmin() || isAccountant());
+      allow delete: if isAdmin();
+
+      match /payments/{paymentId} {
+        allow read: if isAuthenticated() && (isAdmin() || isAccountant());
+        allow create: if isAuthenticated() && (isAdmin() || isAccountant());
+        allow update, delete: if isAdmin();
+      }
+
+      match /activity/{activityId} {
+        allow read: if isAuthenticated() && (isAdmin() || isAccountant());
+        allow create: if isAuthenticated() && (isAdmin() || isAccountant());
+        allow update, delete: if isAdmin();
+      }
+    }
+
+    match /b2bClients/{clientId} {
+      allow read: if isAuthenticated() && (isAdmin() || isAccountant());
+      allow create: if isAdmin();
+      allow update: if isAdmin() || (isAccountant() && request.resource.data.diff(resource.data).affectedKeys().hasAny(['totalBills', 'totalRevenue', 'updatedAt']));
+      allow delete: if isAdmin();
+    }
+
+    match /bills/{billId} {
+      allow read: if isAuthenticated() && (isAdmin() || isAccountant());
+      allow create: if isAdmin();
+      allow update: if isAdmin() || (isAccountant() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'balanceDue', 'updatedAt', 'notes']));
+      allow delete: if isAdmin();
     }
   }
 }

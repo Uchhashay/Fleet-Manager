@@ -217,6 +217,70 @@ export interface StudentTransaction {
 
 export type InvoiceStatus = 'DRAFT' | 'SENT' | 'UNPAID' | 'PARTIAL' | 'PAID' | 'OVERDUE';
 
+export type BookingStatus = 'CONFIRMED' | 'ADVANCE PAID' | 'VEHICLE ASSIGNED' | 'DUTY DONE' | 'SETTLED' | 'CANCELLED';
+
+export interface Hirer {
+  id: string;
+  hirerName: string;
+  contactNumber: string;
+  alternateNumber?: string;
+  address: string;
+  refBy?: string;
+  totalBookings: number;
+  totalRevenue: number;
+  notes?: string;
+  createdAt: any;
+}
+
+export interface Booking {
+  id: string;
+  dutySlipNumber: string;
+  bookingDate: any;
+  departureDate: any;
+  arrivalDate: any;
+  departureTime: string;
+  arrivalTime: string;
+  hirerId: string;
+  hirerName: string;
+  contactNumber: string;
+  alternateContactNumber?: string;
+  address: string;
+  pickupPoint: string;
+  destination: string;
+  vehicleRequired: string;
+  vehicleId?: string;
+  vehicleName?: string;
+  driverId?: string;
+  driverName?: string;
+  driverAllowance: number;
+  refBy?: string;
+  settlementAmount: number;
+  extraCharges: number;
+  extraChargesReason?: string;
+  finalAmount: number;
+  totalPaid: number;
+  balanceDue: number;
+  status: BookingStatus;
+  cancellationReason?: string;
+  refundAmount?: number;
+  refundDate?: any;
+  notes?: string;
+  createdBy: string;
+  createdAt: any;
+  updatedAt: any;
+  calendarEventId?: string;
+}
+
+export interface BookingPayment {
+  id: string;
+  amount: number;
+  paymentDate: any;
+  paymentMode: 'Cash' | 'UPI' | 'Bank Transfer';
+  receivedBy: string;
+  notes?: string;
+  createdAt: any;
+}
+
 export interface Invoice {
   id: string;
   invoiceNumber: string;
@@ -275,6 +339,59 @@ export interface SkippedMonth {
   reason: string;
   skippedBy: string;
   skippedAt: any;
+}
+
+export type BillStatus = 'DRAFT' | 'SENT' | 'PAID' | 'UNPAID';
+
+export interface B2BClient {
+  id: string;
+  clientName: string;
+  contactPerson: string;
+  contactNumber: string;
+  address: string;
+  clientType: 'School' | 'Corporate' | 'Event' | 'Other';
+  gstNumber?: string;
+  totalBills: number;
+  totalRevenue: number;
+  notes?: string;
+  createdAt: any;
+  updatedAt: any;
+}
+
+export interface BillLineItem {
+  description: string;
+  amount: number;
+}
+
+export interface Bill {
+  id: string;
+  billNumber: string;
+  billDate: any;
+  clientId: string;
+  clientName: string;
+  clientType: string;
+  contactPerson: string;
+  contactNumber: string;
+  address: string;
+  lineItems: BillLineItem[];
+  subTotal: number;
+  advancePaid: number;
+  advanceDate?: any;
+  advanceMode?: string;
+  totalAmount: number;
+  balanceDue: number;
+  status: BillStatus;
+  notes?: string;
+  createdBy: string;
+  createdAt: any;
+  updatedAt: any;
+}
+
+export interface BillTemplate {
+  id: string;
+  name: string;
+  content: string;
+  createdAt: any;
 }
 
 export interface Organization {

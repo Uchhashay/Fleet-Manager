@@ -49,7 +49,7 @@ export function FeeCollectionPage() {
   useEffect(() => {
     const unsubscribe = onSnapshot(collection(db, 'students'), (snap) => {
       setStudents(snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Student)));
-    });
+    }, (error) => handleFirestoreError(error, OperationType.LIST, 'students'));
     return () => unsubscribe();
   }, []);
 

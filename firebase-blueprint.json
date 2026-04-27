@@ -320,6 +320,138 @@
         "skippedAt": { "type": "string", "format": "date-time" }
       },
       "required": ["month", "skippedBy"]
+    },
+    "Hirer": {
+      "title": "Hirer",
+      "description": "CRM for regular bus hirers.",
+      "type": "object",
+      "properties": {
+        "hirerName": { "type": "string" },
+        "contactNumber": { "type": "string" },
+        "alternateNumber": { "type": "string" },
+        "address": { "type": "string" },
+        "refBy": { "type": "string" },
+        "totalBookings": { "type": "number" },
+        "totalRevenue": { "type": "number" },
+        "notes": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["hirerName", "contactNumber"]
+    },
+    "Booking": {
+      "title": "Booking",
+      "description": "Bus booking for tours, marriages, etc.",
+      "type": "object",
+      "properties": {
+        "dutySlipNumber": { "type": "string" },
+        "bookingDate": { "type": "string", "format": "date-time" },
+        "departureDate": { "type": "string", "format": "date-time" },
+        "arrivalDate": { "type": "string", "format": "date-time" },
+        "departureTime": { "type": "string" },
+        "arrivalTime": { "type": "string" },
+        "hirerId": { "type": "string" },
+        "hirerName": { "type": "string" },
+        "contactNumber": { "type": "string" },
+        "address": { "type": "string" },
+        "destination": { "type": "string" },
+        "vehicleRequired": { "type": "string" },
+        "vehicleId": { "type": "string" },
+        "driverId": { "type": "string" },
+        "driverAllowance": { "type": "number" },
+        "refBy": { "type": "string" },
+        "settlementAmount": { "type": "number" },
+        "extraCharges": { "type": "number" },
+        "extraChargesReason": { "type": "string" },
+        "finalAmount": { "type": "number" },
+        "totalPaid": { "type": "number" },
+        "balanceDue": { "type": "number" },
+        "status": { "type": "string", "enum": ["CONFIRMED", "ADVANCE PAID", "VEHICLE ASSIGNED", "DUTY DONE", "SETTLED", "CANCELLED"] },
+        "notes": { "type": "string" },
+        "createdBy": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["dutySlipNumber", "departureDate", "hirerName", "destination", "settlementAmount", "status"]
+    },
+    "BookingPayment": {
+      "title": "Booking Payment",
+      "description": "Installments paid for a booking.",
+      "type": "object",
+      "properties": {
+        "amount": { "type": "number" },
+        "paymentDate": { "type": "string", "format": "date-time" },
+        "paymentMode": { "type": "string", "enum": ["Cash", "UPI", "Bank Transfer"] },
+        "receivedBy": { "type": "string" },
+        "notes": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["amount", "paymentDate", "paymentMode", "receivedBy"]
+    },
+    "B2BClient": {
+      "title": "B2B Client",
+      "description": "Information about B2B clients like schools or corporates.",
+      "type": "object",
+      "properties": {
+        "clientName": { "type": "string" },
+        "contactPerson": { "type": "string" },
+        "contactNumber": { "type": "string" },
+        "address": { "type": "string" },
+        "clientType": { "type": "string", "enum": ["School", "Corporate", "Event", "Other"] },
+        "gstNumber": { "type": "string" },
+        "totalBills": { "type": "number" },
+        "totalRevenue": { "type": "number" },
+        "notes": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["clientName", "contactPerson", "contactNumber", "clientType"]
+    },
+    "Bill": {
+      "title": "Bill",
+      "description": "B2B Bill/Invoice.",
+      "type": "object",
+      "properties": {
+        "billNumber": { "type": "string" },
+        "billDate": { "type": "string", "format": "date-time" },
+        "clientId": { "type": "string" },
+        "clientName": { "type": "string" },
+        "clientType": { "type": "string" },
+        "contactPerson": { "type": "string" },
+        "address": { "type": "string" },
+        "lineItems": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "description": { "type": "string" },
+              "amount": { "type": "number" }
+            }
+          }
+        },
+        "subTotal": { "type": "number" },
+        "advancePaid": { "type": "number" },
+        "advanceDate": { "type": "string", "format": "date-time" },
+        "advanceMode": { "type": "string" },
+        "totalAmount": { "type": "number" },
+        "balanceDue": { "type": "number" },
+        "status": { "type": "string", "enum": ["DRAFT", "SENT", "PAID", "UNPAID"] },
+        "notes": { "type": "string" },
+        "createdBy": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["billNumber", "billDate", "clientId", "totalAmount", "status"]
+    },
+    "BillTemplate": {
+      "title": "Bill Template",
+      "description": "Pre-defined description templates for B2B billing.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "description": "Name of the template." },
+        "content": { "type": "string", "description": "Default description content." },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "content"]
     }
   },
   "firestore": {
@@ -394,6 +526,30 @@
     "/students/{studentId}/skippedMonths/{skipId}": {
       "schema": "SkippedMonth",
       "description": "Months skipped by a student."
+    },
+    "/hirers/{hirerId}": {
+      "schema": "Hirer",
+      "description": "Hirer records."
+    },
+    "/bookings/{bookingId}": {
+      "schema": "Booking",
+      "description": "Booking records."
+    },
+    "/bookings/{bookingId}/payments/{paymentId}": {
+      "schema": "BookingPayment",
+      "description": "Payments for a specific booking."
+    },
+    "/b2bClients/{clientId}": {
+      "schema": "B2BClient",
+      "description": "B2B Client records."
+    },
+    "/bills/{billId}": {
+      "schema": "Bill",
+      "description": "B2B Bills."
+    },
+    "/settings/billTemplates/list/{templateId}": {
+      "schema": "BillTemplate",
+      "description": "B2B Bill description templates list."
     }
   }
 }

@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
 import { db, auth } from '../lib/firebase';
-import { collection, getDocs, writeBatch, doc, addDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, getDocs, writeBatch, doc, addDoc, serverTimestamp, Timestamp } from 'firebase/firestore';
 import { handleFirestoreError, OperationType } from '../lib/firebase-utils';
-import { Trash2, AlertTriangle, Loader2, CheckCircle2, ShieldAlert, Database, Plus, Users, Bus, Receipt, CreditCard, Calendar } from 'lucide-react';
+import { Trash2, AlertTriangle, Loader2, CheckCircle2, ShieldAlert, Database, Plus, Users, Bus, Receipt, CreditCard, Calendar, FileText } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { format, subDays } from 'date-fns';
 import { cn } from '../lib/utils';
@@ -209,6 +209,74 @@ export function DeveloperTools() {
           }
           setStatus(`Generating dummy Monthly Entry... Day ${i+1}/60`);
         }
+      } else if (type === 'Invoices & Receipts') {
+        const studentSnap = await getDocs(collection(db, 'students'));
+        if (studentSnap.empty) throw new Error('Please generate Fee Database (students) first.');
+        
+        const students = studentSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        const invoiceRef = collection(db, 'invoices');
+        const receiptRef = collection(db, 'receipts');
+        const today = new Date();
+        
+        for (const student of students as any) {
+          // Generate 3 invoices for each student: Overdue, Due Today, and Future
+          const scenarios = [
+            { month: format(subDays(today, 60), 'MMMM yyyy'), dueDate: subDays(today, 30), status: 'OVERDUE' },
+            { month: format(today, 'MMMM yyyy'), dueDate: today, status: 'UNPAID' },
+            { month: format(today, 'MMMM yyyy'), dueDate: subDays(today, -15), status: 'SENT' }
+          ];
+          
+          for (const scenario of scenarios) {
+            const invNum = `DUMMY-${Math.floor(Math.random() * 1000000).toString().padStart(6, '0')}`;
+            const total = student.feeAmount || 2500;
+            
+            const invDoc = await addDoc(invoiceRef, {
+              invoiceNumber: invNum,
+              studentId: student.id,
+              studentName: student.studentName,
+              fatherName: student.fatherName,
+              schoolName: student.schoolName,
+              standName: student.standName,
+              invoiceDate: serverTimestamp(),
+              dueDate: Timestamp.fromDate(scenario.dueDate),
+              month: scenario.month,
+              feeAmount: total,
+              totalAmount: total,
+              paidAmount: scenario.status === 'PAID' ? total : 0,
+              balanceDue: scenario.status === 'PAID' ? 0 : total,
+              status: scenario.status,
+              createdAt: serverTimestamp(),
+              updatedAt: serverTimestamp()
+            });
+
+            // If overdue, maybe add a partial receipt
+            if (scenario.status === 'OVERDUE' && Math.random() > 0.5) {
+              const amount = 500;
+              await addDoc(receiptRef, {
+                receiptNumber: `RCP-${Math.floor(Math.random() * 1000000).toString().padStart(6, '0')}`,
+                invoiceId: invDoc.id,
+                invoiceNumber: invNum,
+                studentId: student.id,
+                studentName: student.studentName,
+                fatherName: student.fatherName,
+                amountReceived: amount,
+                paymentMode: 'Cash',
+                paymentDate: serverTimestamp(),
+                receivedBy: 'Admin',
+                createdAt: serverTimestamp()
+              });
+              
+              // Update invoice
+              const batch = writeBatch(db);
+              batch.update(invDoc, {
+                paidAmount: amount,
+                balanceDue: total - amount,
+                status: 'PARTIAL'
+              });
+              await batch.commit();
+            }
+          }
+        }
       }
 
       setStatus(`${type} generated successfully!`);
@@ -333,7 +401,8 @@ export function DeveloperTools() {
                 { title: 'Employees', icon: Users, color: 'text-blue-500', bg: 'bg-blue-500/10', border: 'border-blue-500/20' },
                 { title: 'Buses', icon: Bus, color: 'text-purple-500', bg: 'bg-purple-500/10', border: 'border-purple-500/20' },
                 { title: 'Fee Database', icon: Database, color: 'text-orange-500', bg: 'bg-orange-500/10', border: 'border-orange-500/20' },
-                { title: 'Monthly Entry', icon: Calendar, color: 'text-emerald-500', bg: 'bg-emerald-500/10', border: 'border-emerald-500/20' }
+                { title: 'Monthly Entry', icon: Calendar, color: 'text-emerald-500', bg: 'bg-emerald-500/10', border: 'border-emerald-500/20' },
+                { title: 'Invoices & Receipts', icon: FileText, color: 'text-amber-500', bg: 'bg-amber-500/10', border: 'border-amber-500/20' }
               ].map((item) => (
                 <button
                   key={item.title}

@@ -5,7 +5,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { handleFirestoreError, OperationType } from '../lib/firebase-utils';
 import { logActivity } from '../lib/activity-logger';
 import { formatCurrency, cn } from '../lib/utils';
-import { School, ActivityLog } from '../types';
+import { School, ActivityLog, BillTemplate } from '../types';
 import { format } from 'date-fns';
 import { 
   Wallet, 
@@ -26,7 +26,8 @@ import {
   MapPin,
   Phone,
   Upload,
-  Image as ImageIcon
+  Image as ImageIcon,
+  BookTemplate
 } from 'lucide-react';
 import { motion } from 'framer-motion';
 
@@ -56,6 +57,11 @@ export function Settings() {
   const [newSchoolName, setNewSchoolName] = useState('');
   const [addingSchool, setAddingSchool] = useState(false);
 
+  // Bill Templates State
+  const [billTemplates, setBillTemplates] = useState<BillTemplate[]>([]);
+  const [newTemplate, setNewTemplate] = useState({ name: '', content: '' });
+  const [addingTemplate, setAddingTemplate] = useState(false);
+
   // Activity Log State
   const [logs, setLogs] = useState<ActivityLog[]>([]);
   const [logsLoading, setLogsLoading] = useState(true);
@@ -74,17 +80,24 @@ export function Settings() {
     const qSchools = query(collection(db, 'schools'), orderBy('name'));
     const unsubscribeSchools = onSnapshot(qSchools, (snap) => {
       setSchools(snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as School)));
-    });
+    }, (error) => handleFirestoreError(error, OperationType.LIST, 'schools'));
+
+    // Listen to bill templates
+    const qTemplates = query(collection(db, 'settings', 'billTemplates', 'list'), orderBy('createdAt', 'desc'));
+    const unsubscribeTemplates = onSnapshot(qTemplates, (snap) => {
+      setBillTemplates(snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as BillTemplate)));
+    }, (error) => handleFirestoreError(error, OperationType.LIST, 'billTemplates'));
 
     // Listen to logs
     const qLogs = query(collection(db, 'activity_logs'), orderBy('timestamp', 'desc'), limit(100));
     const unsubscribeLogs = onSnapshot(qLogs, (snap) => {
       setLogs(snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as ActivityLog)));
       setLogsLoading(false);
-    });
+    }, (error) => handleFirestoreError(error, OperationType.LIST, 'activity_logs'));
 
     return () => {
       unsubscribeSchools();
+      unsubscribeTemplates();
       unsubscribeLogs();
     };
   }, []);
@@ -227,6 +240,53 @@ export function Settings() {
       }
     } catch (error) {
       handleFirestoreError(error, OperationType.DELETE, 'schools');
+    }
+  }
+
+  async function handleAddTemplate() {
+    if (!newTemplate.name.trim() || !newTemplate.content.trim()) return;
+    setAddingTemplate(true);
+    try {
+      await addDoc(collection(db, 'settings', 'billTemplates', 'list'), {
+        ...newTemplate,
+        createdAt: serverTimestamp()
+      });
+
+      if (profile) {
+        await logActivity(
+          profile.full_name,
+          profile.role,
+          'Created',
+          'Settings',
+          `Added bill template: ${newTemplate.name}`
+        );
+      }
+
+      setNewTemplate({ name: '', content: '' });
+    } catch (error) {
+      handleFirestoreError(error, OperationType.CREATE, 'billTemplates');
+    } finally {
+      setAddingTemplate(false);
+    }
+  }
+
+  async function handleDeleteTemplate(id: string) {
+    if (!confirm('Are you sure you want to delete this template?')) return;
+    const templateToDelete = billTemplates.find(t => t.id === id);
+    try {
+      await deleteDoc(doc(db, 'settings', 'billTemplates', 'list', id));
+
+      if (profile && templateToDelete) {
+        await logActivity(
+          profile.full_name,
+          profile.role,
+          'Deleted',
+          'Settings',
+          `Deleted bill template: ${templateToDelete.name}`
+        );
+      }
+    } catch (error) {
+      handleFirestoreError(error, OperationType.DELETE, 'billTemplates');
     }
   }
 
@@ -560,6 +620,88 @@ export function Settings() {
               )}
               <span>{saving ? 'Saving...' : 'Save Settings'}</span>
             </button>
+          </div>
+        </motion.div>
+
+        {/* Bill Description Templates Section */}
+        <motion.div 
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.15 }}
+          className="card space-y-6"
+        >
+          <div className="flex items-center space-x-3 border-b border-border pb-4">
+            <div className="h-10 w-10 rounded-xl bg-accent/10 flex items-center justify-center text-accent">
+              <BookTemplate className="h-5 w-5 stroke-[1.5px]" />
+            </div>
+            <div>
+              <h3 className="text-lg font-bold text-primary">Bill Templates</h3>
+              <p className="text-xs text-secondary font-medium">Predefined descriptions for B2B billing line items</p>
+            </div>
+          </div>
+
+          <div className="space-y-4">
+            <div className="grid gap-4 md:grid-cols-2">
+               <div className="space-y-1.5">
+                  <label className="text-[10px] font-bold uppercase text-secondary tracking-wider ml-1">Template Name</label>
+                  <input
+                    type="text"
+                    value={newTemplate.name}
+                    onChange={(e) => setNewTemplate({ ...newTemplate, name: e.target.value })}
+                    placeholder="e.g., Monthly School Bus Hire"
+                    className="input"
+                  />
+               </div>
+               <div className="space-y-1.5">
+                  <label className="text-[10px] font-bold uppercase text-secondary tracking-wider ml-1">Description Content</label>
+                  <textarea
+                    value={newTemplate.content}
+                    onChange={(e) => setNewTemplate({ ...newTemplate, content: e.target.value })}
+                    placeholder="Enter the default description..."
+                    className="input min-h-[42px] py-2 resize-none"
+                  />
+               </div>
+            </div>
+            <button
+              onClick={handleAddTemplate}
+              disabled={addingTemplate || !newTemplate.name.trim() || !newTemplate.content.trim()}
+              className="btn-primary w-full flex items-center justify-center space-x-2"
+            >
+              {addingTemplate ? (
+                <div className="h-4 w-4 animate-spin rounded-full border-2 border-background border-t-transparent"></div>
+              ) : (
+                <Plus className="h-4 w-4" />
+              )}
+              <span>Add Template</span>
+            </button>
+          </div>
+
+          <div className="grid gap-4">
+            {billTemplates.length === 0 ? (
+              <div className="text-center py-8 bg-surface rounded-xl border border-dashed border-border">
+                <p className="text-xs text-secondary font-medium">No templates created yet</p>
+              </div>
+            ) : (
+              billTemplates.map(template => (
+                <div 
+                  key={template.id}
+                  className="p-4 rounded-xl bg-surface border border-border group hover:border-accent/30 transition-all flex flex-col gap-2 relative"
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-black text-primary">{template.name}</span>
+                    <button
+                      onClick={() => handleDeleteTemplate(template.id)}
+                      className="p-2 text-secondary hover:text-danger hover:bg-danger/10 rounded-lg transition-all opacity-0 group-hover:opacity-100"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                  </div>
+                  <p className="text-xs text-secondary italic whitespace-pre-line leading-relaxed">
+                    {template.content}
+                  </p>
+                </div>
+              ))
+            )}
           </div>
         </motion.div>
 

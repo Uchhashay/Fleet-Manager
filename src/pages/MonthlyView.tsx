@@ -74,7 +74,7 @@ export function MonthlyView() {
     const qSchools = query(collection(db, 'schools'), orderBy('name'));
     const unsubscribeSchools = onSnapshot(qSchools, (snap) => {
       setSchools(snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as School)));
-    });
+    }, (error) => handleFirestoreError(error, OperationType.LIST, 'schools'));
 
     return () => unsubscribeSchools();
   }, []);

@@ -5,6 +5,7 @@ import { ProtectedRoute } from './components/ProtectedRoute';
 import { Layout } from './components/Layout';
 import { Login } from './pages/Login';
 import { DailyEntry } from './pages/DailyEntry';
+import { FeeAnalysis } from './pages/FeeAnalysis';
 import { MonthlyView } from './pages/MonthlyView';
 import { Dashboard } from './pages/Dashboard';
 import { StaffManager } from './pages/StaffManager';
@@ -19,6 +20,10 @@ import { Cashbook } from './pages/Cashbook';
 import { StudentDatabase } from './pages/StudentDatabase';
 import { FeeCollectionPage } from './pages/FeeCollection';
 import { InvoiceReceipt } from './pages/InvoiceReceipt';
+import { AllBookings } from './pages/AllBookings';
+import { HirerDirectory } from './pages/HirerDirectory';
+import { BookingCalendar } from './pages/BookingCalendar';
+import Bills from './pages/Bills';
 import { AccountantReports } from './pages/AccountantReports';
 import { DriverPerformance } from './pages/DriverPerformance';
 import { Settings } from './pages/Settings';
@@ -103,7 +108,27 @@ export default function App() {
               } />
               <Route path="fees/analysis" element={
                 <ProtectedRoute allowedRoles={['admin', 'accountant', 'developer']}>
-                  <ComingSoon title="Tracking & Analysis" />
+                  <FeeAnalysis />
+                </ProtectedRoute>
+              } />
+              <Route path="booking/all" element={
+                <ProtectedRoute allowedRoles={['admin', 'accountant', 'developer']}>
+                  <AllBookings />
+                </ProtectedRoute>
+              } />
+              <Route path="booking/hirers" element={
+                <ProtectedRoute allowedRoles={['admin', 'accountant', 'developer']}>
+                  <HirerDirectory />
+                </ProtectedRoute>
+              } />
+              <Route path="booking/calendar" element={
+                <ProtectedRoute allowedRoles={['admin', 'accountant', 'developer']}>
+                  <BookingCalendar />
+                </ProtectedRoute>
+              } />
+              <Route path="booking/bills" element={
+                <ProtectedRoute allowedRoles={['admin', 'accountant', 'developer']}>
+                  <Bills />
                 </ProtectedRoute>
               } />
               <Route path="monthly" element={

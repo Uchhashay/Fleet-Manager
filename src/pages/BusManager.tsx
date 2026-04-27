@@ -5,6 +5,7 @@ import { Bus } from '../types';
 import { Plus, Bus as BusIcon, Trash2, Edit2, X, Save, Info, Users } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAuth } from '../contexts/AuthContext';
+import { handleFirestoreError, OperationType } from '../lib/firebase-utils';
 import { logActivity } from '../lib/activity-logger';
 
 export function BusManager() {
@@ -26,10 +27,7 @@ export function BusManager() {
       const busesList = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Bus));
       setBuses(busesList);
       setLoading(false);
-    }, (error) => {
-      console.error('Error fetching buses:', error);
-      setLoading(false);
-    });
+    }, (error) => handleFirestoreError(error, OperationType.LIST, 'buses'));
 
     return () => unsubscribe();
   }, []);

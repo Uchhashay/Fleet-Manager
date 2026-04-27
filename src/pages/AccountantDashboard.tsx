@@ -24,6 +24,7 @@ import { DailyRecord, BusExpense, CompanyExpense, CashTransaction, Staff, Profil
 import { Link } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAuth } from '../contexts/AuthContext';
+import { handleFirestoreError, OperationType } from '../lib/firebase-utils';
 
 export function AccountantDashboard() {
   const { profile } = useAuth();
@@ -60,47 +61,55 @@ export function AccountantDashboard() {
       const unsubscribeProfiles = onSnapshot(qProfiles, async (snap) => {
         const profileList = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Profile));
         
-        // Also fetch from staff collection to be safe
-        const staffSnap = await getDocs(query(collection(db, 'staff'), where('role', '==', 'accountant')));
-        const staffList = staffSnap.docs.map(doc => ({ 
-          id: doc.id, 
-          full_name: doc.data().full_name,
-          role: 'accountant' as any,
-          email: ''
-        } as Profile));
+        try {
+          // Also fetch from staff collection to be safe
+          const staffSnap = await getDocs(query(collection(db, 'staff'), where('role', '==', 'accountant')));
+          const staffList = staffSnap.docs.map(doc => ({ 
+            id: doc.id, 
+            full_name: doc.data().full_name,
+            role: 'accountant' as any,
+            email: ''
+          } as Profile));
 
-        // Merge lists, avoiding duplicates by ID
-        const merged = [...profileList];
-        staffList.forEach(s => {
-          if (!merged.find(p => p.id === s.id)) {
-            merged.push(s);
-          }
-        });
-        
-        setAccountants(merged);
-        
-        // Fetch balances for all
-        const settingsSnap = await getDoc(doc(db, 'settings', 'opening_balances'));
-        const openingBalances = settingsSnap.exists() ? settingsSnap.data() as any : { owner: 0, accountant: 0 };
-
-        merged.forEach(async (acc) => {
-          const cashSnap = await getDocs(query(
-            collection(db, 'cash_transactions'),
-            where('created_by', '==', acc.id)
-          ));
-          let bal = (acc.role === 'admin' || acc.role === 'developer' || acc.id === auth.currentUser?.uid) ? (openingBalances.owner || 0) : (openingBalances.accountant || 0);
-          cashSnap.docs.forEach(doc => {
-            const t = doc.data();
-            const paidBy = t.paid_by || 'accountant';
-            // Only count towards this accountant's balance if they handled it
-            if (paidBy === 'accountant') {
-              if (t.type === 'in') bal += t.amount;
-              else bal -= t.amount;
+          // Merge lists, avoiding duplicates by ID
+          const merged = [...profileList];
+          staffList.forEach(s => {
+            if (!merged.find(p => p.id === s.id)) {
+              merged.push(s);
             }
           });
-          setStaffBalances(prev => ({ ...prev, [acc.id]: bal }));
-        });
-      });
+          
+          setAccountants(merged);
+          
+          // Fetch balances for all
+          const settingsSnap = await getDoc(doc(db, 'settings', 'opening_balances'));
+          const openingBalances = settingsSnap.exists() ? settingsSnap.data() as any : { owner: 0, accountant: 0 };
+
+          merged.forEach(async (acc) => {
+            try {
+              const cashSnap = await getDocs(query(
+                collection(db, 'cash_transactions'),
+                where('created_by', '==', acc.id)
+              ));
+              let bal = (acc.role === 'admin' || acc.role === 'developer' || acc.id === auth.currentUser?.uid) ? (openingBalances.owner || 0) : (openingBalances.accountant || 0);
+              cashSnap.docs.forEach(doc => {
+                const t = doc.data();
+                const paidBy = t.paid_by || 'accountant';
+                // Only count towards this accountant's balance if they handled it
+                if (paidBy === 'accountant') {
+                  if (t.type === 'in') bal += t.amount;
+                  else bal -= t.amount;
+                }
+              });
+              setStaffBalances(prev => ({ ...prev, [acc.id]: bal }));
+            } catch (err) {
+              console.error("Error fetching accountant cash balance:", err);
+            }
+          });
+        } catch (error) {
+          console.error("Error updating accountant list dashboard:", error);
+        }
+      }, (error) => handleFirestoreError(error, OperationType.LIST, 'profiles'));
       return () => unsubscribeProfiles();
     }
   }, [profile]);

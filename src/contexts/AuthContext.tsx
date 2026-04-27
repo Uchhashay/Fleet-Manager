@@ -37,7 +37,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const profileRef = doc(db, 'profiles', user.uid);
       unsubscribeProfile = onSnapshot(profileRef, (docSnap) => {
         if (docSnap.exists()) {
-          const data = docSnap.data() as Profile;
+          const data = { id: docSnap.id, ...docSnap.data() } as Profile;
           if (user.email === 'dhruvsingh349@gmail.com') {
             data.role = 'developer';
           }
