@@ -63,6 +63,7 @@ export function StudentDatabase() {
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
   const [editingStudent, setEditingStudent] = useState<Student | null>(null);
+  const [studentToDelete, setStudentToDelete] = useState<Student | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 20;
 
@@ -266,23 +267,27 @@ export function StudentDatabase() {
     }
   };
 
-  const handleDelete = async (student: Student) => {
-    if (profile?.role !== 'admin') {
+  const handleDelete = (student: Student) => {
+    if (profile?.role !== 'admin' && profile?.role !== 'developer') {
       alert('Only administrators can delete students.');
       return;
     }
+    setStudentToDelete(student);
+  };
 
-    if (!confirm(`Are you sure you want to delete ${student.studentName}? This action cannot be undone.`)) {
-      return;
-    }
-
+  const confirmDelete = async () => {
+    if (!studentToDelete) return;
+    setLoading(true);
     try {
-      await deleteDoc(doc(db, 'students', student.id));
+      await deleteDoc(doc(db, 'students', studentToDelete.id));
       if (profile) {
-        await logActivity(profile.full_name, profile.role, 'Deleted', 'Fees', `Deleted student: ${student.studentName}`);
+        await logActivity(profile.full_name, profile.role, 'Deleted', 'Fees', `Deleted student: ${studentToDelete.studentName}`);
       }
+      setStudentToDelete(null);
     } catch (error) {
       handleFirestoreError(error, OperationType.DELETE, 'students');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -567,6 +572,47 @@ export function StudentDatabase() {
           </div>
         )}
       </div>
+
+      {/* Delete Confirmation Modal */}
+      <AnimatePresence>
+        {studentToDelete && (
+          <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-background/80 backdrop-blur-sm">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-surface w-full max-w-md rounded-3xl shadow-2xl border border-border overflow-hidden"
+            >
+              <div className="p-6 text-center space-y-4">
+                <div className="mx-auto w-16 h-16 rounded-full bg-danger/10 flex items-center justify-center text-danger">
+                  <Trash2 className="h-8 w-8" />
+                </div>
+                <div>
+                  <h3 className="text-xl font-black text-primary tracking-tight">Are you sure?</h3>
+                  <p className="text-sm text-secondary font-medium px-4">
+                    You are about to delete <span className="font-bold text-primary">{studentToDelete.studentName}</span>. 
+                    This action is permanent and cannot be undone.
+                  </p>
+                </div>
+                <div className="flex gap-3 pt-2">
+                  <button
+                    onClick={() => setStudentToDelete(null)}
+                    className="flex-1 btn-secondary py-3"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={confirmDelete}
+                    className="flex-1 bg-danger text-white font-bold rounded-xl hover:bg-danger/90 transition-all py-3 shadow-lg shadow-danger/20"
+                  >
+                    Delete Student
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
 
       {/* Add/Edit Modal */}
       <AnimatePresence>

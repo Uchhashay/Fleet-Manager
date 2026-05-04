@@ -196,8 +196,11 @@ export interface AccountantTransaction {
 export interface FeeCollection {
   id: string;
   date: any; // Firestore Timestamp
+  student_id?: string | null;
   student_name: string;
   receipt_no?: string;
+  receipt_id?: string | null;
+  receipt_number?: string | null;
   school_name: string;
   received_by: string;
   data_entry_by: string;

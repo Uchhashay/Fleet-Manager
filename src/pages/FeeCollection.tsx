@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { db, auth } from '../lib/firebase';
-import { writeBatch, doc, increment, limit, collection, query, where, onSnapshot, orderBy, addDoc, serverTimestamp, Timestamp, getDocs } from 'firebase/firestore';
+import { writeBatch, doc, getDoc, increment, limit, collection, query, where, onSnapshot, orderBy, addDoc, serverTimestamp, Timestamp, getDocs } from 'firebase/firestore';
 import { format, startOfMonth, endOfMonth } from 'date-fns';
 import { 
   Plus, 
@@ -10,27 +10,33 @@ import {
   GraduationCap,
   School,
   CreditCard,
+  Edit2,
   Calendar,
   Filter,
   ChevronDown,
-  Search
+  Search,
+  FileText
 } from 'lucide-react';
 import { formatCurrency, cn } from '../lib/utils';
-import { FeeCollection, Student } from '../types';
+import { FeeCollection, Student, Receipt, Invoice, Organization } from '../types';
 import { handleFirestoreError, OperationType } from '../lib/firebase-utils';
 import { logActivity } from '../lib/activity-logger';
 import { motion, AnimatePresence } from 'framer-motion';
 import { applyPaymentToInvoices } from '../lib/invoice-utils';
 import { amountToWordsIndian } from '../lib/number-utils';
+import { generateReceiptPDF } from '../lib/pdf-service';
 
 import { useAuth } from '../contexts/AuthContext';
 
 export function FeeCollectionPage() {
   const { profile } = useAuth();
   const [collections, setCollections] = useState<FeeCollection[]>([]);
+  const [listSearchQuery, setListSearchQuery] = useState('');
   const [students, setStudents] = useState<Student[]>([]);
+  const [org, setOrg] = useState<Organization | null>(null);
   const [loading, setLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [editingCollection, setEditingCollection] = useState<FeeCollection | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedStudent, setSelectedStudent] = useState<Student | null>(null);
   const [formData, setFormData] = useState({
@@ -45,6 +51,12 @@ export function FeeCollectionPage() {
     notes: '',
     paid_by: 'accountant' as 'owner' | 'accountant'
   });
+
+  useEffect(() => {
+    getDoc(doc(db, 'settings', 'organization')).then(snap => {
+      if (snap.exists()) setOrg(snap.data() as Organization);
+    });
+  }, []);
 
   useEffect(() => {
     const unsubscribe = onSnapshot(collection(db, 'students'), (snap) => {
@@ -62,7 +74,8 @@ export function FeeCollectionPage() {
   }, [profile?.role]);
 
   const [filters, setFilters] = useState({
-    month: format(new Date(), 'yyyy-MM'),
+    dateFrom: format(startOfMonth(new Date()), 'yyyy-MM-dd'),
+    dateTo: format(endOfMonth(new Date()), 'yyyy-MM-dd'),
     school: 'all',
     mode: 'all'
   });
@@ -70,12 +83,12 @@ export function FeeCollectionPage() {
   const feeTypes = ["Sunday Fee Collection", "Regular Fee", "Annual Fee", "Other"];
   const paymentModes = ["Cash", "Online", "Cheque"];
   const schools = ["RNSN", "Rosary", "Apex B-2", "Other"];
-  const collectors = ["Dhruv", "Jai", "Other"];
+  const collectors = ["Dhruv", "Jai", "KSR", "Other"];
 
   useEffect(() => {
     setLoading(true);
-    const start = Timestamp.fromDate(startOfMonth(new Date(filters.month)));
-    const end = Timestamp.fromDate(endOfMonth(new Date(filters.month)));
+    const start = Timestamp.fromDate(new Date(filters.dateFrom));
+    const end = Timestamp.fromDate(new Date(filters.dateTo + 'T23:59:59'));
 
     let q = query(
       collection(db, 'fee_collections'),
@@ -109,43 +122,15 @@ export function FeeCollectionPage() {
     setLoading(true);
     try {
       const batch = writeBatch(db);
-      const feeRef = doc(collection(db, 'fee_collections'));
-      
-      const txData = {
-        ...formData,
-        student_id: selectedStudent?.id || null,
-        date: Timestamp.fromDate(new Date(formData.date)),
-        data_entry_by: auth.currentUser?.email?.split('@')[0] || 'Unknown',
-        recorded_by: auth.currentUser?.uid,
-        created_at: serverTimestamp()
-      };
+      const feeRef = editingCollection 
+        ? doc(db, 'fee_collections', editingCollection.id)
+        : doc(collection(db, 'fee_collections'));
 
-      batch.set(feeRef, txData);
+      let receiptId = editingCollection?.receipt_id || null;
+      let receiptNumberStr = editingCollection?.receipt_number || null;
 
-      // If a student is selected, update their balance and create a receipt
-      if (selectedStudent) {
-        // Apply payment to invoices using FIFO
-        const linkedInvoices = await applyPaymentToInvoices(batch, selectedStudent.id, formData.amount);
-
-        // Update student balance
-        batch.update(doc(db, 'students', selectedStudent.id), {
-          totalBalance: increment(-formData.amount)
-        });
-
-        // Add timeline
-        const timelineRef = doc(collection(db, 'students', selectedStudent.id, 'timeline'));
-        const invoiceInfo = linkedInvoices.length > 0 
-          ? `Adjusted against: ${linkedInvoices.map(li => li.invoiceNumber).join(', ')}`
-          : 'No pending invoices found to adjust against.';
-          
-        batch.set(timelineRef, {
-          event: 'Fee Collected',
-          description: `Collected ₹${formData.amount} via Fee Collection module (${formData.payment_mode}). ${invoiceInfo}`,
-          createdBy: profile?.full_name || 'System',
-          createdAt: serverTimestamp()
-        });
-
-        // Create a receipt
+      // If it's a new record and a student is selected, prepare the receipt info
+      if (!editingCollection && selectedStudent) {
         const q = query(collection(db, 'receipts'), orderBy('receiptNumber', 'desc'), limit(1));
         const snap = await getDocs(q);
         let lastNum = 0;
@@ -156,47 +141,113 @@ export function FeeCollectionPage() {
             lastNum = parseInt(parts[1]);
           }
         }
-        const receiptNumber = `RCP-${(lastNum + 1).toString().padStart(6, '0')}`;
+        receiptNumberStr = `RCP-${(lastNum + 1).toString().padStart(6, '0')}`;
+        receiptId = doc(collection(db, 'receipts')).id;
+      }
+      
+      const txData = {
+        ...formData,
+        student_id: selectedStudent?.id || null,
+        receipt_id: receiptId,
+        receipt_number: receiptNumberStr,
+        date: Timestamp.fromDate(new Date(formData.date)),
+        data_entry_by: auth.currentUser?.email?.split('@')[0] || 'Unknown',
+        recorded_by: auth.currentUser?.uid,
+        updated_at: serverTimestamp(),
+        ...(editingCollection ? {} : { created_at: serverTimestamp() })
+      };
 
-        const receiptRef = doc(collection(db, 'receipts'));
-        
-        // Generate description from months
-        const monthsPaid = linkedInvoices
-          .filter(li => li.invoiceId !== 'ADVANCE')
-          .map(li => li.month);
-        const uniqueMonths = [...new Set(monthsPaid)];
-        const hasAdvance = linkedInvoices.some(li => li.invoiceId === 'ADVANCE');
-        
-        let description = uniqueMonths.length > 0 
-          ? `Fees for ${uniqueMonths.join(', ')}`
-          : 'Transport Fees';
+      if (editingCollection) {
+        batch.update(feeRef, txData);
+      } else {
+        batch.set(feeRef, txData);
+      }
+
+      // If a student is selected, update their balance and create/update a receipt
+      if (selectedStudent) {
+        if (editingCollection) {
+          // If amount changed or student changed, we need to adjust balance
+          // Note: Full invoice re-adjustment is complex, we just update student balance here
+          const oldAmount = editingCollection.amount || 0;
+          const diff = formData.amount - oldAmount;
           
-        if (hasAdvance) {
-          description += uniqueMonths.length > 0 ? ' (incl. Advance)' : 'Advance Payment';
-        }
-        
-        if (formData.notes) description = formData.notes;
+          if (diff !== 0) {
+            batch.update(doc(db, 'students', selectedStudent.id), {
+              totalBalance: increment(-diff)
+            });
+            
+            // Add timeline for adjustment
+            const timelineRef = doc(collection(db, 'students', selectedStudent.id, 'timeline'));
+            batch.set(timelineRef, {
+              event: 'Fee Adjusted',
+              description: `Fee record from ${formData.date} updated. Amount changed from ₹${oldAmount} to ₹${formData.amount}. Difference of ₹${Math.abs(diff)} ${diff > 0 ? 'deducted from' : 'added back to'} balance.`,
+              createdBy: profile?.full_name || 'System',
+              createdAt: serverTimestamp()
+            });
+          }
+        } else {
+          // Apply payment to invoices using FIFO for NEW records
+          const linkedInvoices = await applyPaymentToInvoices(batch, selectedStudent.id, formData.amount);
 
-        batch.set(receiptRef, {
-          receiptNumber,
-          invoiceId: linkedInvoices[0]?.invoiceId || 'N/A',
-          invoiceNumber: linkedInvoices[0]?.invoiceNumber || 'N/A',
-          studentId: selectedStudent.id,
-          studentName: selectedStudent.studentName,
-          fatherName: selectedStudent.fatherName,
-          address: selectedStudent.address,
-          phoneNumber: selectedStudent.phoneNumber,
-          paymentDate: Timestamp.fromDate(new Date(formData.date)),
-          paymentMode: formData.payment_mode,
-          feeType: formData.fee_type,
-          receivedBy: formData.received_by || profile?.full_name || 'System',
-          amountReceived: formData.amount,
-          amountInWords: amountToWordsIndian(formData.amount),
-          linkedInvoices,
-          description,
-          notes: formData.notes,
-          createdAt: serverTimestamp()
-        });
+          // Update student balance
+          batch.update(doc(db, 'students', selectedStudent.id), {
+            totalBalance: increment(-formData.amount)
+          });
+
+          // Add timeline
+          const timelineRef = doc(collection(db, 'students', selectedStudent.id, 'timeline'));
+          const invoiceInfo = linkedInvoices.length > 0 
+            ? `Adjusted against: ${linkedInvoices.map(li => li.invoiceNumber).join(', ')}`
+            : 'No pending invoices found to adjust against.';
+            
+          batch.set(timelineRef, {
+            event: 'Fee Collected',
+            description: `Collected ₹${formData.amount} via Fee Collection module (${formData.payment_mode}). ${invoiceInfo}`,
+            createdBy: profile?.full_name || 'System',
+            createdAt: serverTimestamp()
+          });
+
+          // Create a receipt
+          const receiptRef = doc(db, 'receipts', receiptId!);
+          
+          // Generate description from months
+          const monthsPaid = linkedInvoices
+            .filter(li => li.invoiceId !== 'ADVANCE')
+            .map(li => li.month);
+          const uniqueMonths = [...new Set(monthsPaid)];
+          const hasAdvance = linkedInvoices.some(li => li.invoiceId === 'ADVANCE');
+          
+          let description = uniqueMonths.length > 0 
+            ? `Fees for ${uniqueMonths.join(', ')}`
+            : 'Transport Fees';
+            
+          if (hasAdvance) {
+            description += uniqueMonths.length > 0 ? ' (incl. Advance)' : 'Advance Payment';
+          }
+          
+          if (formData.notes) description = formData.notes;
+
+          batch.set(receiptRef, {
+            receiptNumber: receiptNumberStr,
+            invoiceId: linkedInvoices[0]?.invoiceId || 'N/A',
+            invoiceNumber: linkedInvoices[0]?.invoiceNumber || 'N/A',
+            studentId: selectedStudent.id,
+            studentName: selectedStudent.studentName,
+            fatherName: selectedStudent.fatherName,
+            address: selectedStudent.address,
+            phoneNumber: selectedStudent.phoneNumber,
+            paymentDate: Timestamp.fromDate(new Date(formData.date)),
+            paymentMode: formData.payment_mode,
+            feeType: formData.fee_type,
+            receivedBy: formData.received_by || profile?.full_name || 'System',
+            amountReceived: formData.amount,
+            amountInWords: amountToWordsIndian(formData.amount),
+            linkedInvoices,
+            description,
+            notes: formData.notes,
+            createdAt: serverTimestamp()
+          });
+        }
       }
 
       // Log activity
@@ -204,15 +255,22 @@ export function FeeCollectionPage() {
         await logActivity(
           profile.full_name,
           profile.role,
-          'Created',
+          editingCollection ? 'Edited' : 'Created',
           'Fee Collection',
-          `Collected ${formatCurrency(formData.amount)} from ${formData.student_name} (${formData.school_name})`
+          `${editingCollection ? 'Updated' : 'Collected'} ${formatCurrency(formData.amount)} from ${formData.student_name} (${formData.school_name})`
         );
       }
 
+      // Update Cash Transaction
+      const cashQ = query(
+        collection(db, 'cash_transactions'),
+        where('category', '==', 'fee_collection'),
+        where('linked_id', '==', feeRef.id)
+      );
+      const cashSnap = await getDocs(cashQ);
+
       if (formData.payment_mode === 'Cash') {
-        const cashRef = doc(collection(db, 'cash_transactions'));
-        batch.set(cashRef, {
+        const cashData = {
           date: formData.date,
           type: 'in',
           category: 'fee_collection',
@@ -221,13 +279,24 @@ export function FeeCollectionPage() {
           linked_id: feeRef.id,
           paid_by: formData.paid_by,
           created_by: auth.currentUser?.uid,
-          created_at: serverTimestamp()
-        });
+          updated_at: serverTimestamp()
+        };
+
+        if (cashSnap.empty) {
+          const cashRef = doc(collection(db, 'cash_transactions'));
+          batch.set(cashRef, { ...cashData, created_at: serverTimestamp() });
+        } else {
+          batch.update(doc(db, 'cash_transactions', cashSnap.docs[0].id), cashData);
+        }
+      } else if (!cashSnap.empty) {
+        // If it was cash before but now it's online/cheque, delete cash record
+        batch.delete(doc(db, 'cash_transactions', cashSnap.docs[0].id));
       }
 
       await batch.commit();
 
       setIsModalOpen(false);
+      setEditingCollection(null);
       setSelectedStudent(null);
       setSearchTerm('');
       setFormData({
@@ -267,16 +336,141 @@ export function FeeCollectionPage() {
     const link = document.createElement("a");
     const url = URL.createObjectURL(blob);
     link.setAttribute("href", url);
-    link.setAttribute("download", `fee_collections_${filters.month}.csv`);
+    link.setAttribute("download", `fee_collections_${filters.dateFrom}_to_${filters.dateTo}.csv`);
     link.style.visibility = 'hidden';
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
   };
 
-  const totalFees = collections.reduce((acc, c) => acc + c.amount, 0);
-  const cashFees = collections.filter(c => c.payment_mode === 'Cash').reduce((acc, c) => acc + c.amount, 0);
-  const onlineFees = collections.filter(c => c.payment_mode === 'Online').reduce((acc, c) => acc + c.amount, 0);
+  const handleEdit = (collection: FeeCollection) => {
+    setEditingCollection(collection);
+    const selected = students.find(s => s.id === collection.student_id) || 
+                    students.find(s => s.studentName === collection.student_name);
+    setSelectedStudent(selected || null);
+    setSearchTerm(collection.student_name);
+    setFormData({
+      date: format(collection.date instanceof Timestamp ? collection.date.toDate() : new Date(collection.date), 'yyyy-MM-dd'),
+      student_name: collection.student_name,
+      receipt_no: collection.receipt_no || '',
+      school_name: collection.school_name,
+      received_by: collection.received_by || '',
+      amount: collection.amount,
+      payment_mode: collection.payment_mode,
+      fee_type: collection.fee_type,
+      notes: collection.notes || '',
+      paid_by: collection.paid_by || (profile?.role === 'admin' ? 'owner' : 'accountant')
+    });
+    setIsModalOpen(true);
+  };
+
+  const handleDownloadReceipt = async (feeEntry: FeeCollection) => {
+    setLoading(true);
+    let receiptData: Receipt | null = null;
+    
+    try {
+      // 1. Try by receipt_id
+      if (feeEntry.receipt_id) {
+        const receiptSnap = await getDoc(doc(db, 'receipts', feeEntry.receipt_id));
+        if (receiptSnap.exists()) {
+          receiptData = { id: receiptSnap.id, ...receiptSnap.data() } as Receipt;
+        }
+      }
+
+      // 2. Try searching by receipt number if still null
+      if (!receiptData && (feeEntry.receipt_number || feeEntry.receipt_no)) {
+        const rcpNum = feeEntry.receipt_number || feeEntry.receipt_no;
+        const q = query(
+          collection(db, 'receipts'),
+          where('receiptNumber', '==', rcpNum),
+          limit(1)
+        );
+        const snap = await getDocs(q);
+        if (!snap.empty) {
+          const docData = snap.docs[0].data();
+          receiptData = { id: snap.docs[0].id, ...docData } as Receipt;
+        }
+      }
+
+      // 3. Fallback: Construct a virtual receipt object from the collection data
+      if (!receiptData) {
+        const student = students.find(s => s.id === feeEntry.student_id) || 
+                       students.find(s => s.studentName === feeEntry.student_name);
+        
+        receiptData = {
+          id: 'VIRTUAL-' + feeEntry.id,
+          receiptNumber: feeEntry.receipt_number || feeEntry.receipt_no || 'N/A',
+          studentId: feeEntry.student_id || student?.id || 'N/A',
+          studentName: feeEntry.student_name,
+          fatherName: student?.fatherName || 'N/A',
+          address: student?.address || 'N/A',
+          phoneNumber: student?.phoneNumber || 'N/A',
+          paymentDate: feeEntry.date,
+          paymentMode: feeEntry.payment_mode,
+          feeType: feeEntry.fee_type,
+          receivedBy: feeEntry.received_by || 'System',
+          amountReceived: feeEntry.amount,
+          amountInWords: amountToWordsIndian(feeEntry.amount),
+          description: feeEntry.notes || feeEntry.fee_type,
+          createdAt: feeEntry.date,
+          linkedInvoices: []
+        } as Receipt;
+      }
+
+      // Get organization info
+      let orgData = org;
+      if (!orgData) {
+        const orgSnap = await getDoc(doc(db, 'settings', 'organization'));
+        if (orgSnap.exists()) {
+          orgData = orgSnap.data() as Organization;
+          setOrg(orgData);
+        }
+      }
+
+      if (!orgData) {
+        alert('Organization profile not found. Please set it up in Settings.');
+        setLoading(false);
+        return;
+      }
+
+      generateReceiptPDF(receiptData, undefined, orgData).save(`${receiptData.receiptNumber || 'receipt'}.pdf`);
+    } catch (error) {
+      console.error('Error downloading receipt:', error);
+      alert('Failed to generate receipt PDF.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleWhatsApp = async (feeEntry: FeeCollection) => {
+    const student = students.find(s => s.id === feeEntry.student_id) || 
+                   students.find(s => s.studentName === feeEntry.student_name);
+    if (!student || !student.phoneNumber) {
+      alert('Student phone number not found.');
+      return;
+    }
+
+    const phone = student.phoneNumber.replace(/\D/g, '');
+    const formattedPhone = phone.startsWith('91') ? phone : `91${phone}`;
+    
+    const date = format(feeEntry.date instanceof Timestamp ? feeEntry.date.toDate() : new Date(feeEntry.date), 'dd/MM/yyyy');
+    const message = `Hello, this is a fee payment confirmation for ${feeEntry.student_name}. 
+Amount Received: ₹${feeEntry.amount}
+Date: ${date}
+Receipt No: ${feeEntry.receipt_number || feeEntry.receipt_no || 'N/A'}
+Thank you!`;
+
+    const encodedMessage = encodeURIComponent(message);
+    window.open(`https://wa.me/${formattedPhone}?text=${encodedMessage}`, '_blank');
+  };
+
+  const filteredCollections = collections.filter(c => 
+    c.student_name.toLowerCase().includes(listSearchQuery.toLowerCase())
+  );
+
+  const totalFees = filteredCollections.reduce((acc, c) => acc + c.amount, 0);
+  const cashFees = filteredCollections.filter(c => c.payment_mode === 'Cash').reduce((acc, c) => acc + c.amount, 0);
+  const onlineFees = filteredCollections.filter(c => c.payment_mode === 'Online').reduce((acc, c) => acc + c.amount, 0);
 
   const topSchool = Object.entries(collections.reduce((acc, c) => {
     acc[c.school_name] = (acc[c.school_name] || 0) + c.amount;
@@ -317,7 +511,7 @@ export function FeeCollectionPage() {
           </div>
           <div>
             <h3 className="text-2xl font-bold text-primary tracking-tighter font-mono">{formatCurrency(totalFees)}</h3>
-            <p className="text-[10px] text-secondary font-medium mt-1">{collections.length} Records this month</p>
+            <p className="text-[10px] text-secondary font-medium mt-1">{filteredCollections.length} Records shown</p>
           </div>
         </motion.div>
 
@@ -370,14 +564,39 @@ export function FeeCollectionPage() {
           <Filter className="h-3 w-3 stroke-[1.5px]" />
           <span className="text-[10px] font-bold uppercase tracking-widest">Filter Records</span>
         </div>
-        <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
-          <div className="space-y-2">
-            <label className="label">Month</label>
+        <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-6">
+          <div className="space-y-2 lg:col-span-2">
+            <label className="label">Search Student</label>
             <div className="relative">
               <input
-                type="month"
-                value={filters.month}
-                onChange={(e) => setFilters({ ...filters, month: e.target.value })}
+                type="text"
+                placeholder="Search by name..."
+                value={listSearchQuery}
+                onChange={(e) => setListSearchQuery(e.target.value)}
+                className="input pl-10"
+              />
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-secondary pointer-events-none" />
+            </div>
+          </div>
+          <div className="space-y-2">
+            <label className="label">Date From</label>
+            <div className="relative">
+              <input
+                type="date"
+                value={filters.dateFrom}
+                onChange={(e) => setFilters({ ...filters, dateFrom: e.target.value })}
+                className="input pr-10"
+              />
+              <Calendar className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-secondary pointer-events-none" />
+            </div>
+          </div>
+          <div className="space-y-2">
+            <label className="label">Date To</label>
+            <div className="relative">
+              <input
+                type="date"
+                value={filters.dateTo}
+                onChange={(e) => setFilters({ ...filters, dateTo: e.target.value })}
                 className="input pr-10"
               />
               <Calendar className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-secondary pointer-events-none" />
@@ -428,17 +647,18 @@ export function FeeCollectionPage() {
                 <th>School</th>
                 <th>Mode</th>
                 <th className="text-right">Amount</th>
+                <th className="text-right">Actions</th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={5} className="py-12 text-center">
+                  <td colSpan={6} className="py-12 text-center">
                     <div className="h-6 w-6 animate-spin rounded-full border-2 border-accent border-t-transparent mx-auto"></div>
                   </td>
                 </tr>
-              ) : collections.length > 0 ? (
-                collections.map((c, idx) => (
+              ) : filteredCollections.length > 0 ? (
+                filteredCollections.map((c, idx) => (
                   <motion.tr 
                     key={c.id}
                     initial={{ opacity: 0, y: 5 }}
@@ -466,12 +686,39 @@ export function FeeCollectionPage() {
                     <td className="text-right font-bold text-primary font-mono">
                       {formatCurrency(c.amount)}
                     </td>
+                    <td className="text-right">
+                      <div className="flex justify-end gap-1">
+                        <button
+                          onClick={() => handleWhatsApp(c)}
+                          title="Share on WhatsApp"
+                          className="p-2 text-secondary hover:text-success transition-colors"
+                        >
+                          <svg className="h-4 w-4 fill-current" viewBox="0 0 24 24">
+                            <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.067 2.877 1.215 3.076.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z" />
+                          </svg>
+                        </button>
+                        <button
+                          onClick={() => handleDownloadReceipt(c)}
+                          title="Download Receipt"
+                          className="p-2 text-secondary hover:text-accent transition-colors"
+                        >
+                          <FileText className="h-4 w-4 stroke-[1.5px]" />
+                        </button>
+                        <button
+                          onClick={() => handleEdit(c)}
+                          title="Edit Record"
+                          className="p-2 text-secondary hover:text-accent transition-colors"
+                        >
+                          <Edit2 className="h-4 w-4 stroke-[1.5px]" />
+                        </button>
+                      </div>
+                    </td>
                   </motion.tr>
                 ))
               ) : (
                 <tr>
-                  <td colSpan={5} className="py-12 text-center text-secondary font-medium">
-                    No fee collections found for this month
+                  <td colSpan={6} className="py-12 text-center text-secondary font-medium">
+                    No fee collections found for selected range
                   </td>
                 </tr>
               )}
@@ -499,11 +746,18 @@ export function FeeCollectionPage() {
             >
               <div className="flex items-center justify-between border-b border-border p-6">
                 <div>
-                  <h3 className="text-lg font-bold text-primary tracking-tight">Add Fee Record</h3>
-                  <p className="text-[10px] text-secondary font-medium">Record a new student fee payment</p>
+                  <h3 className="text-lg font-bold text-primary tracking-tight">
+                    {editingCollection ? 'Edit Fee Record' : 'Add Fee Record'}
+                  </h3>
+                  <p className="text-[10px] text-secondary font-medium">
+                    {editingCollection ? 'Modify an existing fee record' : 'Record a new student fee payment'}
+                  </p>
                 </div>
                 <button 
-                  onClick={() => setIsModalOpen(false)} 
+                  onClick={() => {
+                    setIsModalOpen(false);
+                    setEditingCollection(null);
+                  }} 
                   className="rounded-full p-2 text-secondary hover:bg-border/50 transition-colors"
                 >
                   <X className="h-5 w-5 stroke-[1.5px]" />
