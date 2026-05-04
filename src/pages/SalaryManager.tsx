@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { db, auth } from '../lib/firebase';
 import { collection, getDocs, query, where, orderBy, setDoc, doc, serverTimestamp, addDoc, deleteDoc } from 'firebase/firestore';
-import { Staff, SalaryRecord, CashTransaction } from '../types';
+import { Staff, SalaryRecord, CashTransaction, DailyRecord } from '../types';
 import { formatCurrency, cn } from '../lib/utils';
 import { Save, CheckCircle2, AlertCircle, ChevronLeft, ChevronRight, Calculator, Calendar, User, Briefcase, Clock, Wallet, X, IndianRupee, History, ArrowDownRight, ArrowUpRight, MessageSquare, Trash2 } from 'lucide-react';
 import { format, startOfMonth, endOfMonth, subMonths } from 'date-fns';
@@ -21,6 +21,9 @@ export function SalaryManager() {
   const [expandedStaff, setExpandedStaff] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
+  const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
+  const [transactionToDelete, setTransactionToDelete] = useState<any>(null);
+  const [staffNameForDelete, setStaffNameForDelete] = useState('');
   const [paymentData, setPaymentData] = useState({ 
     staffId: '', 
     amount: 0, 
@@ -36,40 +39,26 @@ export function SalaryManager() {
   async function fetchData() {
     setLoading(true);
     try {
-      const start = format(startOfMonth(currentMonth), 'yyyy-MM-dd');
-      const end = format(endOfMonth(currentMonth), 'yyyy-MM-dd');
       const monthStr = format(currentMonth, 'yyyy-MM');
-      const prevMonth = subMonths(currentMonth, 1);
-      const prevMonthStr = format(prevMonth, 'yyyy-MM');
-      const prevStart = format(startOfMonth(prevMonth), 'yyyy-MM-dd');
-      const prevEnd = format(endOfMonth(prevMonth), 'yyyy-MM-dd');
+      const startOfCurrentMonth = startOfMonth(currentMonth);
+      const endOfCurrentMonth = endOfMonth(currentMonth);
+      const startOfCurrentMonthStr = format(startOfCurrentMonth, 'yyyy-MM-dd');
+      const endOfCurrentMonthStr = format(endOfCurrentMonth, 'yyyy-MM-dd');
 
-      const [staffSnap, recordsSnap, salariesSnap, cashSnap, prevSalariesSnap, prevCashSnap] = await Promise.all([
+      const [staffSnap, allRecordsSnap, allSalariesSnap, allCashSnap] = await Promise.all([
         getDocs(query(collection(db, 'staff'), orderBy('full_name'))),
-        getDocs(query(collection(db, 'daily_records'), where('date', '>=', start), where('date', '<=', end))),
-        getDocs(query(collection(db, 'salary_records'), where('month', '==', monthStr))),
+        getDocs(collection(db, 'daily_records')),
+        getDocs(collection(db, 'salary_records')),
         getDocs(query(
-          collection(db, 'cash_transactions'), 
-          where('date', '>=', start), 
-          where('date', '<=', end),
-          where('category', 'in', ['salary', 'salary_advance', 'duty_payment'])
-        )),
-        getDocs(query(collection(db, 'salary_records'), where('month', '==', prevMonthStr))),
-        getDocs(query(
-          collection(db, 'cash_transactions'), 
-          where('date', '>=', prevStart), 
-          where('date', '<=', prevEnd),
-          where('category', 'in', ['salary', 'salary_advance'])
+          collection(db, 'cash_transactions'),
+          where('staff_id', '!=', null)
         ))
       ]);
 
       const staffList = staffSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Staff));
-      const recordsList = recordsSnap.docs.map(doc => doc.data());
-      const salariesList = salariesSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as SalaryRecord));
-      const cashList = cashSnap.docs.map(doc => doc.data() as CashTransaction);
-      
-      const prevSalariesList = prevSalariesSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as SalaryRecord));
-      const prevCashList = prevCashSnap.docs.map(doc => doc.data() as CashTransaction);
+      const allRecords = allRecordsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as DailyRecord));
+      const allSalaries = allSalariesSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as SalaryRecord));
+      const allCash = allCashSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as CashTransaction));
 
       setStaff(staffList);
 
@@ -78,98 +67,91 @@ export function SalaryManager() {
       const newStaffTransactions: Record<string, CashTransaction[]> = {};
       
       staffList.forEach(s => {
-        // Calculate Previous Month Balance (Opening Balance)
-        const prevSalary = prevSalariesList.find(sal => sal.staff_id === s.id);
-        let openingBalance = 0;
-        if (prevSalary) {
-          const prevTransactions = prevCashList.filter(t => t.staff_id === s.id);
-          const prevPaid = prevTransactions.reduce((sum, t) => sum + (t.amount || 0), 0);
-          openingBalance = (prevSalary.net_payable || 0) - prevPaid;
-        }
-
-        const staffRecords = recordsList.filter(r => 
-          (r.driver_id === s.id || r.helper_id === s.id) && !r.is_holiday
-        );
-        newStaffDuties[s.id] = staffRecords;
+        // --- LIFETIME CALCULATION (Exact match with Driver Performance Statement) ---
         
-        const staffTransactionsList = cashList.filter(t => t.staff_id === s.id);
-        newStaffTransactions[s.id] = staffTransactionsList;
+        const staffAllRecords = allRecords.filter(r => r.driver_id === s.id || r.helper_id === s.id);
+        const staffAllSalaries = allSalaries.filter(sal => sal.staff_id === s.id);
+        const staffAllCash = allCash.filter(t => t.staff_id === s.id);
 
-        const advanceAmount = staffTransactionsList
-          .filter(t => t.category === 'salary_advance')
-          .reduce((sum, t) => sum + (t.amount || 0), 0);
-        const dutyPaidAmount = staffTransactionsList
-          .filter(t => t.category === 'duty_payment')
-          .reduce((sum, t) => sum + (t.amount || 0), 0);
-        const salaryPaidAmount = staffTransactionsList
-          .filter(t => t.category === 'salary')
-          .reduce((sum, t) => sum + (t.amount || 0), 0);
-        const totalPaid = advanceAmount + dutyPaidAmount + salaryPaidAmount;
+        // 1. Accrued Earnings (Duties from all time)
+        const allDutyAccruals = staffAllRecords.map(r => ({
+          date: r.date,
+          amount: r.driver_id === s.id ? (r.driver_duty_payable || 0) : (r.helper_duty_payable || 0)
+        })).reduce((sum, e) => sum + e.amount, 0);
 
-        const workingDays = staffRecords.length || 0;
+        // 2. Accrued Earnings (Salaries from all saved records - Deduplicated)
+        const uniqueMonths = new Set<string>();
+        const allSalaryAccruals = staffAllSalaries
+          .sort((a, b) => b.month.localeCompare(a.month)) // Latest first
+          .filter(sal => {
+            if (uniqueMonths.has(sal.month)) return false;
+            uniqueMonths.add(sal.month);
+            return true;
+          })
+          .map(sal => ({
+            month: sal.month,
+            amount: (sal.fixed_salary || 0) + (sal.allowances || 0) + (sal.adjustments || 0) - (sal.deductions || 0)
+          }))
+          .reduce((sum, e) => sum + e.amount, 0);
 
-        const totalPayableDuty = staffRecords.reduce((sum, r) => {
-          if (r.driver_id === s.id) return sum + (r.driver_duty_payable || 0);
-          if (r.helper_id === s.id) return sum + (r.helper_duty_payable || 0);
-          return sum;
+        // 3. Paid Amount (Cash Payments + Duty Payments within records)
+        const allCashPayments = staffAllCash.reduce((sum, t) => sum + (t.amount || 0), 0);
+        const allInRecordPayments = staffAllRecords.reduce((sum, r) => {
+          return sum + (r.driver_id === s.id ? (r.driver_duty_paid || 0) : (r.helper_duty_paid || 0));
         }, 0);
 
-        const existingSalary = salariesList.find(sal => sal.staff_id === s.id);
+        // --- TOTALS ---
+        const lifetimeEarned = allDutyAccruals + allSalaryAccruals;
+        const lifetimePaid = allCashPayments + allInRecordPayments;
+        const totalOutstanding = lifetimeEarned - lifetimePaid;
+
+        // --- CURRENT MONTH DETAILS FOR UI ---
+        const currentMonthRecords = staffAllRecords.filter(r => r.date >= startOfCurrentMonthStr && r.date <= endOfCurrentMonthStr);
+        const currentMonthTransactions = staffAllCash.filter(t => t.date >= startOfCurrentMonthStr && t.date <= endOfCurrentMonthStr);
+        
+        newStaffDuties[s.id] = currentMonthRecords.sort((a, b) => b.date.localeCompare(a.date));
+        newStaffTransactions[s.id] = currentMonthTransactions.sort((a, b) => b.date.localeCompare(a.date));
+
+        const paidThisMonth = currentMonthTransactions.reduce((sum, t) => sum + (t.amount || 0), 0) +
+                             currentMonthRecords.reduce((sum, r) => sum + (r.driver_id === s.id ? (r.driver_duty_paid || 0) : (r.helper_duty_paid || 0)), 0);
+
+        const dutyPayableThisMonth = currentMonthRecords.reduce((sum, r) => {
+          return sum + (r.driver_id === s.id ? (r.driver_duty_payable || 0) : (r.helper_duty_payable || 0));
+        }, 0);
+
+        const existingSalary = staffAllSalaries.find(sal => sal.month === monthStr);
+        const currentMonthAccrual = (existingSalary ? 
+          ((existingSalary.fixed_salary || 0) + (existingSalary.duty_amount || 0) + (existingSalary.allowances || 0) + (existingSalary.adjustments || 0) - (existingSalary.deductions || 0)) :
+          ((s.fixed_salary || 0) + dutyPayableThisMonth)
+        );
 
         if (existingSalary) {
-          // HISTORICAL LOCK: Use stored fixed_salary, don't overwrite from Staff Master
-          // DUTY CONSISTENCY: Lock duty if Fully Paid
-          const isLocked = existingSalary.status === 'paid';
-          
-          const dutyAmount = isLocked ? existingSalary.duty_amount : totalPayableDuty;
-          const currentEarnings = (existingSalary.fixed_salary || 0) + 
-                           (dutyAmount || 0) + 
-                           (existingSalary.allowances || 0) + 
-                           (existingSalary.adjustments || 0) - 
-                           (existingSalary.deductions || 0);
-
-          const netPayable = currentEarnings + openingBalance;
-          const pending = netPayable - totalPaid;
-          let status: 'unpaid' | 'partial' | 'paid' = 'unpaid';
-          if (totalPaid === 0 && openingBalance === 0) status = 'unpaid';
-          else if (pending <= 0) status = 'paid';
-          else status = 'partial';
-
           newSalaries[s.id] = {
             ...existingSalary,
-            duty_amount: dutyAmount,
-            net_payable: netPayable,
-            status: status
+            duty_amount: existingSalary.duty_amount || dutyPayableThisMonth,
+            net_payable: currentMonthAccrual, 
+            status: totalOutstanding <= 1 ? 'paid' : (paidThisMonth > 0 ? 'partial' : 'unpaid')
           };
         } else {
-          const currentEarnings = (s.fixed_salary || 0) + totalPayableDuty;
-          const netPayable = currentEarnings + openingBalance;
-          const pending = netPayable - totalPaid;
-          let status: 'unpaid' | 'partial' | 'paid' = 'unpaid';
-          if (totalPaid === 0 && openingBalance === 0) status = 'unpaid';
-          else if (pending <= 0) status = 'paid';
-          else status = 'partial';
-
           newSalaries[s.id] = {
             staff_id: s.id,
             month: monthStr,
-            working_days: workingDays,
-            duty_amount: totalPayableDuty,
+            working_days: new Set(currentMonthRecords.map(r => r.date)).size,
+            duty_amount: dutyPayableThisMonth,
             fixed_salary: s.fixed_salary,
             adjustments: 0,
             allowances: 0,
             deductions: 0,
-            net_payable: netPayable,
-            status: status
+            net_payable: currentMonthAccrual,
+            status: totalOutstanding <= 1 ? 'paid' : (paidThisMonth > 0 ? 'partial' : 'unpaid')
           };
         }
 
-        // Add dynamic fields for UI
-        (newSalaries[s.id] as any).opening_balance = openingBalance;
-        (newSalaries[s.id] as any).total_paid = totalPaid;
-        (newSalaries[s.id] as any).advance_amount = advanceAmount;
-        (newSalaries[s.id] as any).duty_paid_amount = dutyPaidAmount;
-        (newSalaries[s.id] as any).pending_balance = (newSalaries[s.id].net_payable || 0) - totalPaid;
+        // Context for UI
+        (newSalaries[s.id] as any).pending_balance = totalOutstanding;
+        (newSalaries[s.id] as any).total_paid = lifetimePaid;
+        (newSalaries[s.id] as any).paid_this_month = paidThisMonth;
+        (newSalaries[s.id] as any).lifetime_earned = lifetimeEarned;
       });
 
       setSalaries(newSalaries);
@@ -181,6 +163,7 @@ export function SalaryManager() {
       setLoading(false);
     }
   }
+
 
   const handleSalaryChange = (staffId: string, field: keyof SalaryRecord, value: any) => {
     setSalaries(prev => {
@@ -308,10 +291,26 @@ export function SalaryManager() {
   });
 
   async function handleDeletePayment(transaction: any, staffName: string) {
-    if (!confirm(`Are you sure you want to delete this payment of ${formatCurrency(transaction.amount)}?`)) return;
+    if (!transaction.id) {
+      const errorMsg = 'Error: Transaction ID missing. Cannot delete.';
+      console.error(errorMsg, transaction);
+      alert(errorMsg);
+      setMessage({ type: 'error', text: errorMsg });
+      setTimeout(() => setMessage(null), 3000);
+      return;
+    }
     
+    setTransactionToDelete(transaction);
+    setStaffNameForDelete(staffName);
+    setIsDeleteConfirmOpen(true);
+  }
+
+  async function confirmDelete() {
+    if (!transactionToDelete) return;
+
+    setSaving(true);
     try {
-      await deleteDoc(doc(db, 'cash_transactions', transaction.id));
+      await deleteDoc(doc(db, 'cash_transactions', transactionToDelete.id));
       
       // Log activity
       if (profile) {
@@ -320,14 +319,21 @@ export function SalaryManager() {
           profile.role,
           'Deleted',
           'Salary Management',
-          `Deleted ${transaction.type} payment of ${formatCurrency(transaction.amount)} for ${staffName}`
+          `Deleted payment of ${formatCurrency(transactionToDelete.amount)} for ${staffNameForDelete}`
         );
       }
       
       setMessage({ type: 'success', text: 'Payment deleted successfully' });
+      setIsDeleteConfirmOpen(false);
+      setTransactionToDelete(null);
       fetchData();
     } catch (error) {
+      console.error('Delete error:', error);
+      setMessage({ type: 'error', text: 'Failed to delete payment' });
       handleFirestoreError(error, OperationType.DELETE, 'cash_transactions');
+    } finally {
+      setSaving(false);
+      setTimeout(() => setMessage(null), 3000);
     }
   }
 
@@ -632,7 +638,7 @@ export function SalaryManager() {
                                 <th className="px-4 py-3 text-[9px] font-bold text-secondary uppercase tracking-widest">Paid By</th>
                                 <th className="px-4 py-3 text-[9px] font-bold text-secondary uppercase tracking-widest">Description</th>
                                 <th className="px-4 py-3 text-[9px] font-bold text-secondary uppercase tracking-widest text-right">Amount</th>
-                                { (profile?.role === 'admin' || profile?.role === 'developer') && <th className="px-4 py-3 text-[9px] font-bold text-secondary uppercase tracking-widest text-right">Actions</th>}
+                                { (profile?.role === 'admin' || profile?.role === 'developer' || profile?.role === 'accountant') && <th className="px-4 py-3 text-[9px] font-bold text-secondary uppercase tracking-widest text-right">Actions</th>}
                               </tr>
                             </thead>
                             <tbody className="divide-y divide-border">
@@ -701,11 +707,16 @@ export function SalaryManager() {
                                   )}>
                                     {item.isPayment ? '-' : ''}{formatCurrency(item.amount)}
                                   </td>
-                                  { (profile?.role === 'admin' || profile?.role === 'developer') && (
+                                  { (profile?.role === 'admin' || profile?.role === 'developer' || profile?.role === 'accountant') && (
                                     <td className="px-4 py-3 text-right">
                                       {item.isPayment && !(item as any).isOpening && (
                                         <button
-                                          onClick={() => handleDeletePayment(item, s.full_name)}
+                                          type="button"
+                                          onClick={(e) => {
+                                            e.preventDefault();
+                                            e.stopPropagation();
+                                            handleDeletePayment(item, s.full_name);
+                                          }}
                                           className="p-1.5 text-secondary hover:text-danger hover:bg-danger/10 rounded-lg transition-all"
                                           title="Delete Payment"
                                         >
@@ -843,6 +854,61 @@ export function SalaryManager() {
                   )}
                   <span>Confirm Payment</span>
                 </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {isDeleteConfirmOpen && (
+          <div className="fixed inset-0 z-[80] flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setIsDeleteConfirmOpen(false)}
+              className="absolute inset-0 bg-background/80 backdrop-blur-md" 
+            />
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="relative w-full max-w-sm card shadow-2xl border-danger/20"
+            >
+              <div className="text-center space-y-6">
+                <div className="mx-auto w-16 h-16 rounded-full bg-danger/10 flex items-center justify-center">
+                  <AlertCircle className="h-8 w-8 text-danger stroke-[1.5px]" />
+                </div>
+                
+                <div className="space-y-2">
+                  <h3 className="text-xl font-bold text-primary">Delete Payment</h3>
+                  <p className="text-sm text-secondary leading-relaxed px-4">
+                    Are you sure you want to delete this payment of <span className="font-bold text-primary font-mono">{formatCurrency(transactionToDelete?.amount)}</span> for <span className="font-bold text-primary">{staffNameForDelete}</span>? This action cannot be undone.
+                  </p>
+                </div>
+
+                <div className="flex flex-col space-y-3 pt-2">
+                  <button
+                    onClick={confirmDelete}
+                    disabled={saving}
+                    className="btn-primary !bg-danger !border-danger !text-white flex items-center justify-center space-x-2 !py-4"
+                  >
+                    {saving ? (
+                      <div className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+                    ) : (
+                      <Trash2 className="h-4 w-4 stroke-[1.5px]" />
+                    )}
+                    <span>Delete Permanently</span>
+                  </button>
+                  <button
+                    onClick={() => setIsDeleteConfirmOpen(false)}
+                    disabled={saving}
+                    className="btn-secondary !py-4 text-xs uppercase tracking-widest font-bold"
+                  >
+                    Cancel
+                  </button>
+                </div>
               </div>
             </motion.div>
           </div>

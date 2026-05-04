@@ -3,7 +3,7 @@ import { db } from '../lib/firebase';
 import { collection, onSnapshot, addDoc, updateDoc, deleteDoc, doc, serverTimestamp, query, orderBy } from 'firebase/firestore';
 import { Staff, UserRole } from '../types';
 import { formatCurrency, cn } from '../lib/utils';
-import { UserPlus, Trash2, Edit2, X, Save, Users, Briefcase, IndianRupee, Clock, BarChart2 } from 'lucide-react';
+import { UserPlus, Trash2, Edit2, X, Save, Users, Briefcase, IndianRupee, Clock, BarChart2, AlertTriangle, ChevronDown, ChevronRight, Phone, Calendar, Home, CreditCard } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
@@ -15,12 +15,24 @@ export function StaffManager() {
   const [staff, setStaff] = useState<Staff[]>([]);
   const [loading, setLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
+  const [staffToDelete, setStaffToDelete] = useState<Staff | null>(null);
+  const [showPersonalDetails, setShowPersonalDetails] = useState(false);
   const [editingStaff, setEditingStaff] = useState<Staff | null>(null);
   const [formData, setFormData] = useState({
     full_name: '',
     role: 'driver' as UserRole,
     fixed_salary: 0,
-    duty_rate: 0
+    duty_rate: 0,
+    is_active: true,
+    phone: '',
+    emergency_contact_name: '',
+    emergency_contact_number: '',
+    home_address: '',
+    identity_type: 'Aadhaar Card' as Staff['identity_type'],
+    identity_number: '',
+    date_of_birth: '',
+    join_date: new Date().toISOString().split('T')[0]
   });
 
   useEffect(() => {
@@ -42,18 +54,38 @@ export function StaffManager() {
       setEditingStaff(s);
       setFormData({
         full_name: s.full_name,
-        role: s.role,
+        role: s.role as UserRole,
         fixed_salary: s.fixed_salary,
-        duty_rate: s.duty_rate || 0
+        duty_rate: s.duty_rate || 0,
+        is_active: s.is_active ?? true,
+        phone: s.phone || '',
+        emergency_contact_name: s.emergency_contact_name || '',
+        emergency_contact_number: s.emergency_contact_number || '',
+        home_address: s.home_address || '',
+        identity_type: s.identity_type || 'Aadhaar Card',
+        identity_number: s.identity_number || '',
+        date_of_birth: s.date_of_birth || '',
+        join_date: s.join_date || new Date().toISOString().split('T')[0]
       });
+      setShowPersonalDetails(false);
     } else {
       setEditingStaff(null);
       setFormData({
         full_name: '',
         role: 'driver',
         fixed_salary: 0,
-        duty_rate: 0
+        duty_rate: 0,
+        is_active: true,
+        phone: '',
+        emergency_contact_name: '',
+        emergency_contact_number: '',
+        home_address: '',
+        identity_type: 'Aadhaar Card',
+        identity_number: '',
+        date_of_birth: '',
+        join_date: new Date().toISOString().split('T')[0]
       });
+      setShowPersonalDetails(false);
     }
     setIsModalOpen(true);
   };
@@ -93,12 +125,16 @@ export function StaffManager() {
     }
   };
 
-  const handleDelete = async (id: string) => {
-    if (!confirm('Are you sure you want to delete this staff member?')) return;
-    const staffToDelete = staff.find(s => s.id === id);
+  const handleDeleteClick = (s: Staff) => {
+    setStaffToDelete(s);
+    setIsDeleteModalOpen(true);
+  };
+
+  const confirmDelete = async () => {
+    if (!staffToDelete) return;
     try {
-      await deleteDoc(doc(db, 'staff', id));
-      if (profile && staffToDelete) {
+      await deleteDoc(doc(db, 'staff', staffToDelete.id));
+      if (profile) {
         await logActivity(
           profile.full_name,
           profile.role,
@@ -107,8 +143,11 @@ export function StaffManager() {
           `Deleted staff member: ${staffToDelete.full_name}`
         );
       }
+      setIsDeleteModalOpen(false);
+      setStaffToDelete(null);
     } catch (error) {
       console.error('Error deleting staff:', error);
+      handleFirestoreError(error, OperationType.DELETE, `staff/${staffToDelete.id}`);
     }
   };
 
@@ -151,8 +190,14 @@ export function StaffManager() {
             >
               <div className="flex items-start justify-between">
                 <div className="flex items-center space-x-4">
-                  <div className="h-12 w-12 rounded-full bg-accent/10 flex items-center justify-center text-accent font-bold text-lg border border-accent/20">
-                    {s.full_name[0]}
+                  <div className="relative">
+                    <div className="h-12 w-12 rounded-full bg-accent/10 flex items-center justify-center text-accent font-bold text-lg border border-accent/20">
+                      {s.full_name[0]}
+                    </div>
+                    <div className={cn(
+                      "absolute bottom-0 right-0 h-3 w-3 rounded-full border-2 border-background",
+                      s.is_active !== false ? "bg-success animate-pulse" : "bg-gray-400"
+                    )} />
                   </div>
                   <div>
                     <h3 className="font-bold text-primary tracking-tight">{s.full_name}</h3>
@@ -177,7 +222,7 @@ export function StaffManager() {
                     <Edit2 className="h-4 w-4 stroke-[1.5px]" />
                   </button>
                   <button 
-                    onClick={() => handleDelete(s.id)}
+                    onClick={() => handleDeleteClick(s)}
                     className="p-2 text-secondary hover:text-danger hover:bg-danger/10 rounded-lg transition-colors"
                   >
                     <Trash2 className="h-4 w-4 stroke-[1.5px]" />
@@ -220,9 +265,9 @@ export function StaffManager() {
               initial={{ opacity: 0, scale: 0.95, y: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              className="relative w-full max-w-md card shadow-2xl border-accent/20"
+              className="relative w-full max-w-xl card shadow-2xl border-accent/20 max-h-[90vh] overflow-y-auto"
             >
-              <div className="mb-8 flex items-center justify-between">
+              <div className="mb-8 flex items-center justify-between sticky top-0 bg-background/95 backdrop-blur-md pb-4 z-10">
                 <div className="space-y-1">
                   <div className="flex items-center space-x-2 text-accent">
                     <UserPlus className="h-3 w-3 stroke-[1.5px]" />
@@ -295,6 +340,140 @@ export function StaffManager() {
                   </div>
                 </div>
 
+                {/* Collapsible Personal Details */}
+                <div className="border-t border-border pt-4">
+                  <button
+                    type="button"
+                    onClick={() => setShowPersonalDetails(!showPersonalDetails)}
+                    className="flex items-center justify-between w-full p-2 hover:bg-surface rounded-lg transition-colors"
+                  >
+                    <div className="flex items-center space-x-2 text-[11px] font-bold uppercase tracking-[0.1em] text-secondary">
+                      {showPersonalDetails ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+                      <span>Personal Details (Optional)</span>
+                    </div>
+                  </button>
+
+                  <AnimatePresence>
+                    {showPersonalDetails && (
+                      <motion.div
+                        initial={{ height: 0, opacity: 0 }}
+                        animate={{ height: 'auto', opacity: 1 }}
+                        exit={{ height: 0, opacity: 0 }}
+                        className="overflow-hidden"
+                      >
+                        <div className="space-y-4 pt-4 px-1">
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                            <div className="space-y-2">
+                              <label className="label">Phone Number</label>
+                              <div className="relative">
+                                <Phone className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-secondary/50" />
+                                <input
+                                  type="tel"
+                                  value={formData.phone}
+                                  onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
+                                  className="input !pl-10"
+                                  placeholder="e.g. +91 98765 43210"
+                                />
+                              </div>
+                            </div>
+                            <div className="space-y-2">
+                              <label className="label">Date of Birth</label>
+                              <div className="relative">
+                                <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-secondary/50" />
+                                <input
+                                  type="date"
+                                  value={formData.date_of_birth}
+                                  onChange={(e) => setFormData({ ...formData, date_of_birth: e.target.value })}
+                                  className="input !pl-10"
+                                />
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                            <div className="space-y-2">
+                              <label className="label">Date of Joining</label>
+                              <div className="relative">
+                                <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-secondary/50" />
+                                <input
+                                  type="date"
+                                  value={formData.join_date}
+                                  onChange={(e) => setFormData({ ...formData, join_date: e.target.value })}
+                                  className="input !pl-10"
+                                />
+                              </div>
+                            </div>
+                            <div className="space-y-2">
+                              <label className="label">Identity Type</label>
+                              <div className="relative">
+                                <CreditCard className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-secondary/50" />
+                                <select
+                                  value={formData.identity_type}
+                                  onChange={(e) => setFormData({ ...formData, identity_type: e.target.value as Staff['identity_type'] })}
+                                  className="input !pl-10 appearance-none"
+                                >
+                                  <option value="Aadhaar Card">Aadhaar Card</option>
+                                  <option value="PAN Card">PAN Card</option>
+                                  <option value="Driving License">Driving License</option>
+                                  <option value="Voter ID">Voter ID</option>
+                                  <option value="Passport">Passport</option>
+                                </select>
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="space-y-2">
+                            <label className="label">Identity Number</label>
+                            <input
+                              type="text"
+                              value={formData.identity_number}
+                              onChange={(e) => setFormData({ ...formData, identity_number: e.target.value })}
+                              className="input"
+                              placeholder="e.g. 1234 5678 9012"
+                            />
+                          </div>
+
+                          <div className="space-y-2">
+                            <label className="label">Home Address</label>
+                            <div className="relative">
+                              <Home className="absolute left-3 top-3 h-4 w-4 text-secondary/50" />
+                              <textarea
+                                value={formData.home_address}
+                                onChange={(e) => setFormData({ ...formData, home_address: e.target.value })}
+                                className="input !pl-10 min-h-[80px] py-2"
+                                placeholder="Full residential address..."
+                              />
+                            </div>
+                          </div>
+
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 border-t border-border pt-4">
+                            <div className="space-y-2">
+                              <label className="label">Emergency Contact Name</label>
+                              <input
+                                type="text"
+                                value={formData.emergency_contact_name}
+                                onChange={(e) => setFormData({ ...formData, emergency_contact_name: e.target.value })}
+                                className="input"
+                                placeholder="Name of relative/friend"
+                              />
+                            </div>
+                            <div className="space-y-2">
+                              <label className="label">Emergency Contact Phone</label>
+                              <input
+                                type="tel"
+                                value={formData.emergency_contact_number}
+                                onChange={(e) => setFormData({ ...formData, emergency_contact_number: e.target.value })}
+                                className="input"
+                                placeholder="Emergency phone"
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </div>
+
                 <button
                   type="submit"
                   className="btn-primary w-full flex items-center justify-center space-x-2 !py-4 mt-4"
@@ -303,6 +482,49 @@ export function StaffManager() {
                   <span>{editingStaff ? 'Update Member' : 'Save Member'}</span>
                 </button>
               </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+      <AnimatePresence>
+        {isDeleteModalOpen && staffToDelete && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="absolute inset-0 bg-background/80 backdrop-blur-[4px] z-0"
+              onClick={() => setIsDeleteModalOpen(false)}
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.9, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9, y: 20 }}
+              className="relative w-full max-w-sm card bg-background shadow-2xl border-danger/10 z-10"
+            >
+              <div className="flex flex-col items-center text-center p-4">
+                <div className="h-16 w-16 rounded-full bg-danger/10 flex items-center justify-center mb-6">
+                  <AlertTriangle className="h-8 w-8 text-danger" />
+                </div>
+                <h3 className="text-xl font-bold text-primary mb-2">Delete Staff Member</h3>
+                <p className="text-sm text-secondary mb-8">
+                  Are you sure you want to delete <span className="font-bold text-primary">{staffToDelete.full_name}</span>? This action cannot be undone.
+                </p>
+                <div className="grid grid-cols-2 gap-3 w-full">
+                  <button
+                    onClick={() => setIsDeleteModalOpen(false)}
+                    className="px-4 py-3 rounded-xl border border-border text-xs font-bold text-secondary hover:bg-surface transition-all uppercase tracking-widest"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={confirmDelete}
+                    className="px-4 py-3 rounded-xl bg-danger text-white text-xs font-bold hover:bg-danger/90 transition-all uppercase tracking-widest shadow-lg shadow-danger/20"
+                  >
+                    Delete
+                  </button>
+                </div>
+              </div>
             </motion.div>
           </div>
         )}

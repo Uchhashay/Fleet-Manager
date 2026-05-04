@@ -1,7 +1,7 @@
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { format } from 'date-fns';
-import { Invoice, Receipt, Student, Organization, Booking, BookingPayment } from '../types';
+import { Invoice, Receipt, Student, Organization, Booking, BookingPayment, Staff, SalaryRecord, DailyRecord, Bus } from '../types';
 import { amountToWordsIndian } from './number-utils';
 
 const formatPDFCurrency = (amount: number) => {
@@ -635,6 +635,261 @@ export const generateStatementPDF = (
   doc.setFontSize(10);
   doc.setFont('helvetica', 'bold');
   doc.text(`Balance Due ${formatRupee(balanceDue)}`, pageWidth - 15, finalY + 10, { align: 'right' });
+
+  return doc;
+};
+
+export const generateStaffStatementPDF = (
+  staff: Staff,
+  salaries: SalaryRecord[],
+  ledger: any[],
+  org: Organization,
+  dateRange: { start: string, end: string },
+  calculations: { totalEarned: number, totalPaid: number, totalPending: number, totalDuties: number, totalDaysWorked: number }
+) => {
+  const doc = new jsPDF();
+  const pageWidth = doc.internal.pageSize.width;
+
+  const formatRupee = (amount: number) => {
+    return 'Rs. ' + new Intl.NumberFormat('en-IN', {
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 0,
+    }).format(amount || 0);
+  };
+
+  // Header
+  // Background for header
+  doc.setFillColor(249, 250, 251);
+  doc.rect(0, 0, pageWidth, 45, 'F');
+
+  if (org.logo_url) {
+    try {
+      doc.addImage(org.logo_url, 'PNG', 15, 12, 20, 20);
+    } catch (e) {
+      console.error('PDF Logo Error:', e);
+    }
+  }
+  doc.setFontSize(20);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(17, 24, 39);
+  doc.text(org.name || 'JAGRITI TOURS & TRAVELS', 40, 22);
+  
+  doc.setFontSize(9);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(107, 114, 128);
+  doc.text(`${org.address_line1 || 'Burari, Delhi'} | PH: ${org.phone || ''}`, 40, 28);
+  doc.text(`Email: ${org.email || ''} | Website: ${org.website || ''}`, 40, 33);
+
+  doc.setFontSize(18);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(79, 70, 229);
+  doc.text('STAFF STATEMENT OF ACCOUNTS', pageWidth / 2, 60, { align: 'center' });
+  doc.setTextColor(17, 24, 39);
+
+  // Staff Info Box
+  doc.setFillColor(249, 250, 251);
+  doc.roundedRect(15, 70, pageWidth - 30, 22, 2, 2, 'F');
+  
+  doc.setFontSize(10);
+  doc.setFont('helvetica', 'bold');
+  doc.text(`NAME: ${staff.full_name.toUpperCase()}`, 20, 78);
+  doc.text(`ROLE: ${staff.role.toUpperCase()}`, 20, 86);
+  
+  doc.setFont('helvetica', 'normal');
+  doc.text(`PERIOD: ${dateRange.start} TO ${dateRange.end}`, pageWidth - 20, 78, { align: 'right' });
+  doc.text(`GENERATED: ${format(new Date(), 'dd MMM yyyy HH:mm')}`, pageWidth - 20, 86, { align: 'right' });
+
+  // Detailed Ledger Table
+  doc.setFontSize(11);
+  doc.setFont('helvetica', 'bold');
+  doc.text('TRANSACTION LEDGER', 15, 105);
+
+  autoTable(doc, {
+    startY: 110,
+    head: [['Date', 'Description', 'Accrual (+)', 'Payment (-)', 'Balance']],
+    body: ledger.map(item => [
+      item.date,
+      item.description,
+      item.type === 'accrual' ? formatRupee(item.amount) : '-',
+      item.type === 'payment' ? formatRupee(item.amount) : '-',
+      formatRupee(item.runningBalance)
+    ]),
+    theme: 'striped',
+    headStyles: { fillColor: [79, 70, 229], textColor: [255, 255, 255] },
+    styles: { fontSize: 8, cellPadding: 3 },
+    columnStyles: {
+      2: { halign: 'right' },
+      3: { halign: 'right' },
+      4: { halign: 'right', fontStyle: 'bold' }
+    }
+  });
+
+  const finalYStart = (doc as any).lastAutoTable.finalY + 15;
+
+  // Summary Totals
+  doc.setFillColor(249, 250, 251);
+  doc.roundedRect(15, finalYStart, pageWidth - 30, 40, 2, 2, 'F');
+  
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(10);
+  doc.text('ACCOUNT SUMMARY', 20, finalYStart + 10);
+  
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(9);
+  doc.text(`Total Earned: ${formatRupee(calculations.totalEarned)}`, 20, finalYStart + 20);
+  doc.text(`Total Paid: ${formatRupee(calculations.totalPaid)}`, 20, finalYStart + 28);
+  
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(220, 38, 38);
+  doc.text(`Pending Balance: ${formatRupee(calculations.totalPending)}`, 20, finalYStart + 36);
+  doc.setTextColor(17, 24, 39);
+  
+  doc.setFont('helvetica', 'normal');
+  doc.text(`Total Duties: ${calculations.totalDuties}`, pageWidth / 2 + 10, finalYStart + 20);
+  doc.text(`Total Days Present: ${calculations.totalDaysWorked}`, pageWidth / 2 + 10, finalYStart + 28);
+
+  // Footer
+  const sigY = doc.internal.pageSize.height - 40;
+  doc.line(pageWidth - 85, sigY, pageWidth - 15, sigY);
+  doc.setFont('helvetica', 'bold');
+  doc.text('FOR JAGRITI TOURS & TRAVELS', pageWidth - 50, sigY - 8, { align: 'center' });
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(8);
+  doc.text('AUTHORIZED SIGNATORY', pageWidth - 50, sigY + 5, { align: 'center' });
+
+  return doc;
+};
+
+export const generateDutyHistoryPDF = (
+  staff: Staff,
+  records: DailyRecord[],
+  buses: Bus[],
+  org: Organization,
+  dateRange: { start: string, end: string },
+  summary: { totalPayable: number, totalPaid: number, totalBalance: number, totalCollections: number }
+) => {
+  const doc = new jsPDF();
+  const pageWidth = doc.internal.pageSize.width;
+  const primaryColor = [79, 70, 229]; // Indigo
+
+  const formatRupee = (amount: number) => {
+    return 'Rs. ' + new Intl.NumberFormat('en-IN', {
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 0,
+    }).format(amount || 0);
+  };
+
+  // 1. Header
+  doc.setFillColor(249, 250, 251);
+  doc.rect(0, 0, pageWidth, 40, 'F');
+
+  if (org.logo_url) {
+    try {
+      doc.addImage(org.logo_url, 'PNG', 15, 10, 20, 20);
+    } catch (e) {
+      console.error('PDF Logo Error:', e);
+    }
+  }
+
+  doc.setTextColor(17, 24, 39);
+  doc.setFontSize(20);
+  doc.setFont('helvetica', 'bold');
+  doc.text(org.name || 'JAGRITI TOURS & TRAVELS', 40, 18);
+  
+  doc.setFontSize(9);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(107, 114, 128);
+  doc.text(`${org.address_line1 || 'Burari, Delhi'} | PH: ${org.phone || ''}`, 40, 24);
+  doc.text(`Email: ${org.email || ''} | Website: ${org.website || ''}`, 40, 29);
+
+  doc.setFontSize(16);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(primaryColor[0], primaryColor[1], primaryColor[2]);
+  doc.text('DUTY HISTORY REPORT', pageWidth / 2, 55, { align: 'center' });
+
+  // 2. Info Section
+  doc.setFillColor(249, 250, 251);
+  doc.roundedRect(15, 65, pageWidth - 30, 25, 2, 2, 'F');
+  
+  doc.setFontSize(10);
+  doc.setTextColor(17, 24, 39);
+  doc.setFont('helvetica', 'bold');
+  doc.text(`STAFF: ${staff.full_name.toUpperCase()}`, 20, 75);
+  doc.text(`ROLE: ${staff.role.toUpperCase()}`, 20, 82);
+  
+  doc.setFont('helvetica', 'normal');
+  doc.text(`PERIOD: ${format(new Date(dateRange.start), 'dd MMM yyyy')} TO ${format(new Date(dateRange.end), 'dd MMM yyyy')}`, pageWidth - 20, 75, { align: 'right' });
+  doc.text(`GENERATED: ${format(new Date(), 'dd MMM yyyy HH:mm')}`, pageWidth - 20, 82, { align: 'right' });
+
+  // 3. Summary Stats (4 Boxes)
+  const boxWidth = (pageWidth - 45) / 4;
+  let curY = 95;
+
+  const drawStatBox = (x: number, title: string, value: string, color: number[]) => {
+    doc.setFillColor(249, 250, 251);
+    doc.roundedRect(x, curY, boxWidth, 20, 1, 1, 'F');
+    doc.setDrawColor(229, 231, 235);
+    doc.roundedRect(x, curY, boxWidth, 20, 1, 1, 'S');
+    
+    doc.setFontSize(7);
+    doc.setTextColor(107, 114, 128);
+    doc.setFont('helvetica', 'bold');
+    doc.text(title, x + boxWidth / 2, curY + 6, { align: 'center' });
+    
+    doc.setFontSize(10);
+    doc.setTextColor(color[0], color[1], color[2]);
+    doc.text(value, x + boxWidth / 2, curY + 14, { align: 'center' });
+  };
+
+  drawStatBox(15, 'DUTY PAYABLE', formatRupee(summary.totalPayable), [17, 24, 39]);
+  drawStatBox(15 + boxWidth + 5, 'DUTY PAID', formatRupee(summary.totalPaid), [22, 163, 74]);
+  drawStatBox(15 + (boxWidth + 5) * 2, 'BALANCE', formatRupee(summary.totalBalance), [220, 38, 38]);
+  drawStatBox(15 + (boxWidth + 5) * 3, 'COLLECTION', formatRupee(summary.totalCollections), [79, 70, 229]);
+
+  // 4. History Table
+  autoTable(doc, {
+    startY: curY + 25,
+    head: [['Date', 'Bus', 'Trips', 'Payable', 'Paid', 'Balance', 'Coll']],
+    body: records.map(r => {
+      const bus = buses.find(b => b.id === r.bus_id);
+      const payable = r.driver_id === staff.id ? (r.driver_duty_payable || 0) : (r.helper_duty_payable || 0);
+      const paid = r.driver_id === staff.id ? (r.driver_duty_paid || 0) : (r.helper_duty_paid || 0);
+      const collection = (r.school_morning || 0) + (r.school_evening || 0) + 
+                         (r.charter_morning || 0) + (r.charter_evening || 0) + 
+                         (r.private_booking || 0);
+      
+      let trips = [];
+      if (r.school_morning > 0 || r.school_evening > 0) trips.push('Sch');
+      if (r.charter_morning > 0 || r.charter_evening > 0) trips.push('Chr');
+      if (r.private_booking > 0) trips.push('Priv');
+
+      return [
+        format(new Date(r.date), 'dd MMM'),
+        bus?.registration_number || 'N/A',
+        trips.join(','),
+        formatRupee(payable),
+        formatRupee(paid),
+        formatRupee(payable - paid),
+        formatRupee(collection)
+      ];
+    }),
+    theme: 'grid',
+    headStyles: { fillColor: [79, 70, 229], textColor: [255, 255, 255], fontSize: 8 },
+    styles: { fontSize: 7, cellPadding: 2 },
+    columnStyles: {
+      3: { halign: 'right' },
+      4: { halign: 'right' },
+      5: { halign: 'right' },
+      6: { halign: 'right' }
+    }
+  });
+
+  const finalY = (doc as any).lastAutoTable.finalY + 10;
+  if (finalY < doc.internal.pageSize.height - 40) {
+    doc.setFontSize(8);
+    doc.setTextColor(150, 150, 150);
+    doc.text('Powered by Jagriti Fleet Manager', pageWidth / 2, doc.internal.pageSize.height - 10, { align: 'center' });
+  }
 
   return doc;
 };

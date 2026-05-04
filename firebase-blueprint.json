@@ -257,6 +257,39 @@
       },
       "required": ["month", "amount", "status", "type", "createdBy"]
     },
+    "StaffComment": {
+      "title": "Staff Comment",
+      "type": "object",
+      "properties": {
+        "text": { "type": "string" },
+        "createdBy": { "type": "string" },
+        "createdByRole": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["text", "createdBy"]
+    },
+    "School": {
+      "title": "School",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "created_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name"]
+    },
+    "ActivityLog": {
+      "title": "Activity Log",
+      "type": "object",
+      "properties": {
+        "user_name": { "type": "string" },
+        "user_role": { "type": "string" },
+        "action_type": { "type": "string" },
+        "module": { "type": "string" },
+        "details": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" }
+      },
+      "required": ["user_name", "user_role", "action_type", "module", "details"]
+    },
     "Invoice": {
       "title": "Invoice",
       "description": "Student fee invoice.",
@@ -467,6 +500,10 @@
       "schema": "Staff",
       "description": "Staff member documents."
     },
+    "/staff/{staffId}/comments/{commentId}": {
+      "schema": "StaffComment",
+      "description": "Internal comments for a staff member."
+    },
     "/daily_records/{recordId}": {
       "schema": "DailyRecord",
       "description": "Daily entry records."
@@ -522,6 +559,14 @@
     "/receipts/{receiptId}": {
       "schema": "Receipt",
       "description": "Payment receipts."
+    },
+    "/schools/{schoolId}": {
+      "schema": "School",
+      "description": "School list."
+    },
+    "/activity_logs/{logId}": {
+      "schema": "ActivityLog",
+      "description": "System activity audit logs."
     },
     "/students/{studentId}/skippedMonths/{skipId}": {
       "schema": "SkippedMonth",

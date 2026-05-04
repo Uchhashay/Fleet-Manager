@@ -2,73 +2,6 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     // ===============================================================
-    // Assumed Data Model
-    // ===============================================================
-    //
-    // Collection: profiles
-    // Document ID: {userId}
-    // Fields:
-    //   - full_name: string (required)
-    //   - role: string (required, ['admin', 'accountant', 'driver', 'helper'])
-    //   - created_at: timestamp (required)
-    //
-    // Collection: buses
-    // Document ID: {busId}
-    // Fields:
-    //   - registration_number: string (required)
-    //   - model: string
-    //   - capacity: number
-    //   - created_at: timestamp
-    //
-    // Collection: staff
-    // Document ID: {staffId}
-    // Fields:
-    //   - full_name: string (required)
-    //   - role: string (required, ['driver', 'helper'])
-    //   - fixed_salary: number
-    //   - duty_rate: number
-    //   - created_at: timestamp
-    //
-    // Collection: daily_records
-    // Document ID: {recordId}
-    // Fields:
-    //   - date: string (required, YYYY-MM-DD)
-    //   - bus_id: string (required)
-    //   - driver_id: string
-    //   - helper_id: string
-    //   - fuel_amount: number
-    //   - ... (collection fields)
-    //
-    // Collection: settings
-    // Document ID: organization
-    // Fields:
-    //   - name: string (required)
-    //   - industry: string
-    //   - location: string
-    //   - address_line1: string
-    //   - address_line2: string
-    //   - zip_code: string
-    //   - phone: string
-    //   - fax: string
-    //   - website: string
-    //   - logo_url: string (base64 or URL)
-    //
-    // Collection: students
-    // Document ID: {studentId}
-    // Fields:
-    //   - studentName: string (required)
-    //   - fatherName: string (required)
-    //   - phoneNumber: string (required)
-    //   - schoolName: string (required)
-    //   - standName: string (required)
-    //   - class: string (required)
-    //   - feeAmount: number (required)
-    //   - totalBalance: number
-    //   - isActive: boolean
-    //
-    // ===============================================================
-
-    // ===============================================================
     // Helper Functions
     // ===============================================================
     
@@ -76,197 +9,171 @@ service cloud.firestore {
       return request.auth != null;
     }
 
-    function isAdmin() {
+    function getUserData() {
+      return get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data;
+    }
+
+    function hasRole(role) {
       return isAuthenticated() && 
-        (
-          request.auth.token.email == "dhruvsingh349@gmail.com" ||
-          (exists(/databases/$(database)/documents/profiles/$(request.auth.uid)) && 
-           get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data.role in ['admin', 'developer'])
-        );
+             exists(/databases/$(database)/documents/profiles/$(request.auth.uid)) && 
+             getUserData().role == role;
+    }
+
+    function isAdmin() {
+      return hasRole('admin') || hasRole('developer') || request.auth.token.email == "dhruvsingh349@gmail.com";
     }
 
     function isAccountant() {
-      return isAuthenticated() && 
-        (
-          request.auth.token.email == "dhruvsingh349@gmail.com" ||
-          (exists(/databases/$(database)/documents/profiles/$(request.auth.uid)) && 
-           get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data.role in ['accountant', 'admin', 'developer'])
-        );
+      return hasRole('accountant') || isAdmin();
     }
-
-    function isStaff() {
-      return isAuthenticated() && 
-        (get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data.role == 'driver' ||
-         get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data.role == 'helper');
+    
+    function isDeveloper() {
+      return hasRole('developer') || request.auth.token.email == "dhruvsingh349@gmail.com";
     }
 
     function isOwner(userId) {
       return isAuthenticated() && request.auth.uid == userId;
     }
 
-    function isValidUserProfile(data) {
-      return data.keys().hasAll(['full_name', 'role']) &&
-             data.full_name is string && data.full_name.size() > 0 && data.full_name.size() < 100 &&
-             data.role in ['admin', 'accountant', 'driver', 'helper', 'developer'];
+    // Default deny
+    match /{document=**} {
+      allow read, write: if false;
     }
 
-    // ===============================================================
-    // Rules
-    // ===============================================================
-
+    // Profiles (Users)
     match /profiles/{userId} {
       allow read: if isAuthenticated();
-      allow create: if isAuthenticated() && isOwner(userId) && isValidUserProfile(request.resource.data);
-      allow update: if isAuthenticated() && (isOwner(userId) || isAdmin()) && isValidUserProfile(request.resource.data);
+      allow create: if isAuthenticated() && isOwner(userId);
+      allow update: if isAdmin() || isOwner(userId);
       allow delete: if isAdmin();
     }
 
-    match /buses/{busId} {
-      allow read: if isAuthenticated();
-      allow write: if isAdmin();
-    }
-
-    match /staff/{staffId} {
-      allow read: if isAuthenticated();
-      allow write: if isAdmin();
-    }
-
-    match /daily_records/{recordId} {
-      allow read: if isAuthenticated();
-      allow write: if isAdmin() || isAccountant();
-    }
-
-    match /bus_expenses/{expenseId} {
-      allow read: if isAuthenticated();
-      allow write: if isAdmin() || isAccountant();
-    }
-
-    match /company_expenses/{expenseId} {
-      allow read: if isAuthenticated();
-      allow write: if isAdmin() || isAccountant();
-    }
-
-    match /salary_records/{recordId} {
-      allow read: if isAuthenticated() && (isAdmin() || isAccountant() || request.auth.uid == resource.data.staff_id);
-      allow write: if isAdmin() || isAccountant();
-    }
-
-    match /accountant_transactions/{transactionId} {
-      allow read: if isAuthenticated() && (isAdmin() || isAccountant());
-      allow write: if isAuthenticated() && (isAdmin() || isAccountant());
-    }
-
-    match /fee_collections/{collectionId} {
-      allow read: if isAuthenticated() && (isAdmin() || isAccountant());
-      allow write: if isAuthenticated() && (isAdmin() || isAccountant());
-    }
-
-    match /cash_transactions/{transactionId} {
-      allow read: if isAuthenticated() && (isAdmin() || isAccountant());
-      allow write: if isAuthenticated() && (isAdmin() || isAccountant());
-    }
-
-    match /students/{studentId} {
-      allow read: if isAuthenticated() && (isAdmin() || isAccountant());
-      allow create, update: if isAuthenticated() && (isAdmin() || isAccountant());
-      allow delete: if isAdmin();
-
-      match /comments/{commentId} {
-        allow read: if isAuthenticated() && (isAdmin() || isAccountant());
-        allow create: if isAuthenticated() && (isAdmin() || isAccountant());
-        allow update, delete: if isAdmin();
-      }
-
-      match /timeline/{eventId} {
-        allow read: if isAuthenticated() && (isAdmin() || isAccountant());
-        allow create: if isAuthenticated();
-        allow update, delete: if isAdmin();
-      }
-
-      match /transactions/{transactionId} {
-        allow read: if isAuthenticated() && (isAdmin() || isAccountant());
-        allow create, update: if isAuthenticated() && (isAdmin() || isAccountant());
-        allow delete: if isAdmin();
-      }
-
-      match /skippedMonths/{skipId} {
-        allow read: if isAuthenticated() && (isAdmin() || isAccountant());
-        allow create: if isAuthenticated() && (isAdmin() || isAccountant());
-        allow delete: if isAdmin();
-      }
-    }
-
-    match /invoices/{invoiceId} {
-      allow read: if isAuthenticated() && (isAdmin() || isAccountant());
-      allow create, update: if isAuthenticated() && (isAdmin() || isAccountant());
-      allow delete: if isAdmin();
-    }
-
-    match /receipts/{receiptId} {
-      allow read: if isAuthenticated() && (isAdmin() || isAccountant());
-      allow create: if isAuthenticated() && (isAdmin() || isAccountant());
-      allow update, delete: if isAdmin();
-    }
-
+    // Settings
     match /settings/{settingId} {
       allow read: if isAuthenticated();
       allow write: if isAdmin();
       
-      // Support subcollections under settings
       match /{allSubcollections=**} {
         allow read: if isAuthenticated();
         allow write: if isAdmin();
       }
     }
 
-    match /schools/{schoolId} {
+    // Buses
+    match /buses/{busId} {
       allow read: if isAuthenticated();
-      allow write: if isAdmin();
+      allow write: if isAccountant();
     }
 
+    // Staff
+    match /staff/{staffId} {
+      allow read: if isAuthenticated();
+      allow write: if isAccountant();
+      
+      match /comments/{commentId} {
+        allow read, create: if isAuthenticated();
+        allow update, delete: if isAdmin();
+      }
+    }
+
+    // Daily Records
+    match /daily_records/{recordId} {
+      allow read: if isAuthenticated();
+      allow write: if isAccountant() || (isAuthenticated() && request.auth.token.email == "dhruvsingh349@gmail.com");
+
+      match /editHistory/{historyId} {
+        allow read: if isAuthenticated();
+        allow create: if isAccountant() || (isAuthenticated() && request.auth.token.email == "dhruvsingh349@gmail.com");
+        allow update, delete: if isAdmin();
+      }
+    }
+
+    // Expenses
+    match /bus_expenses/{expenseId} {
+      allow read: if isAuthenticated();
+      allow write: if isAccountant();
+    }
+
+    match /company_expenses/{expenseId} {
+      allow read: if isAuthenticated();
+      allow write: if isAccountant();
+    }
+
+    // Transactions
+    match /cash_transactions/{transactionId} {
+      allow read: if isAuthenticated();
+      allow write: if isAccountant();
+    }
+
+    // Salary Records
+    match /salary_records/{recordId} {
+      allow read: if isAuthenticated();
+      allow write: if isAccountant();
+    }
+
+    // Fee Collections
+    match /fee_collections/{feeId} {
+      allow read: if isAuthenticated();
+      allow write: if isAccountant();
+    }
+
+    // Students
+    match /students/{studentId} {
+      allow read: if isAccountant();
+      allow write: if isAccountant();
+      
+      match /{allSubcollections=**} {
+        allow read, write: if isAccountant();
+      }
+    }
+
+    // Bills
+    match /bills/{billId} {
+      allow read: if isAuthenticated();
+      allow write: if isAccountant();
+    }
+
+    // B2B Clients
+    match /b2bClients/{clientId} {
+      allow read: if isAuthenticated();
+      allow write: if isAccountant();
+    }
+
+    // Schools
+    match /schools/{schoolId} {
+      allow read: if isAuthenticated();
+      allow write: if isAccountant();
+    }
+
+    // Activity Logs
     match /activity_logs/{logId} {
-      allow read: if isAdmin();
+      allow read: if isAccountant();
       allow create: if isAuthenticated();
       allow update, delete: if isAdmin();
     }
 
+    // Hirers & Bookings (Travel Agency)
     match /hirers/{hirerId} {
-      allow read: if isAuthenticated() && (isAdmin() || isAccountant());
-      allow create, update: if isAuthenticated() && (isAdmin() || isAccountant());
-      allow delete: if isAdmin();
+      allow read: if isAccountant();
+      allow write: if isAccountant();
     }
 
     match /bookings/{bookingId} {
-      allow read: if isAuthenticated() && (isAdmin() || isAccountant());
-      allow create: if isAuthenticated() && (isAdmin() || isAccountant());
-      allow update: if isAuthenticated() && (isAdmin() || isAccountant());
-      allow delete: if isAdmin();
-
-      match /payments/{paymentId} {
-        allow read: if isAuthenticated() && (isAdmin() || isAccountant());
-        allow create: if isAuthenticated() && (isAdmin() || isAccountant());
-        allow update, delete: if isAdmin();
-      }
-
-      match /activity/{activityId} {
-        allow read: if isAuthenticated() && (isAdmin() || isAccountant());
-        allow create: if isAuthenticated() && (isAdmin() || isAccountant());
-        allow update, delete: if isAdmin();
+      allow read: if isAccountant();
+      allow write: if isAccountant();
+      
+      match /{allSubcollections=**} {
+        allow read, write: if isAccountant();
       }
     }
-
-    match /b2bClients/{clientId} {
-      allow read: if isAuthenticated() && (isAdmin() || isAccountant());
-      allow create: if isAdmin();
-      allow update: if isAdmin() || (isAccountant() && request.resource.data.diff(resource.data).affectedKeys().hasAny(['totalBills', 'totalRevenue', 'updatedAt']));
-      allow delete: if isAdmin();
+    
+    // Invoices & Receipts
+    match /invoices/{invoiceId} {
+      allow read, write: if isAccountant();
     }
-
-    match /bills/{billId} {
-      allow read: if isAuthenticated() && (isAdmin() || isAccountant());
-      allow create: if isAdmin();
-      allow update: if isAdmin() || (isAccountant() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'balanceDue', 'updatedAt', 'notes']));
-      allow delete: if isAdmin();
+    
+    match /receipts/{receiptId} {
+      allow read, write: if isAccountant();
     }
   }
 }

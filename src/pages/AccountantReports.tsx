@@ -386,8 +386,7 @@ export function AccountantReports() {
               <div className="mt-6 pt-4 border-t border-border/50 flex items-center justify-end">
                 <button 
                   onClick={() => {
-                    const start = rangeType === 'custom' ? customRange.start : format(startOfMonth(new Date()), 'yyyy-MM-dd');
-                    navigate(`/monthly?busId=${report.busId}&start=${start}`);
+                    navigate(`/admin/buses/${report.busId}`);
                   }}
                   className="text-[10px] font-bold text-accent uppercase tracking-widest flex items-center space-x-1 hover:space-x-2 transition-all"
                 >

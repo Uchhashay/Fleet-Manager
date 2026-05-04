@@ -73,8 +73,12 @@ export function DailyEntry() {
         getDocs(query(collection(db, 'staff'), orderBy('full_name')))
       ]);
 
-      const busesList = busesSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Bus));
-      const staffList = staffSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Staff));
+      const busesList = busesSnap.docs
+        .map(doc => ({ id: doc.id, ...doc.data() } as Bus))
+        .filter(bus => bus.is_active !== false);
+      const staffList = staffSnap.docs
+        .map(doc => ({ id: doc.id, ...doc.data() } as Staff))
+        .filter(s => s.is_active !== false);
 
       setBuses(busesList);
       setStaff(staffList);
@@ -407,18 +411,6 @@ export function DailyEntry() {
                             ))}
                           </select>
                         </div>
-                        <div className="space-y-2">
-                          <label className="label !mb-0 text-[10px]">Morning Amount (₹)</label>
-                          <input 
-                            type="number" 
-                            inputMode="numeric" 
-                            name="school_morning" 
-                            value={formData.school_morning || ''} 
-                            onChange={handleInputChange} 
-                            className="input font-mono" 
-                            placeholder="0" 
-                          />
-                        </div>
                       </div>
                       <div className="space-y-3">
                         <div className="space-y-2">
@@ -434,18 +426,6 @@ export function DailyEntry() {
                               <option key={s.id} value={s.name}>{s.name}</option>
                             ))}
                           </select>
-                        </div>
-                        <div className="space-y-2">
-                          <label className="label !mb-0 text-[10px]">Evening Amount (₹)</label>
-                          <input 
-                            type="number" 
-                            inputMode="numeric" 
-                            name="school_evening" 
-                            value={formData.school_evening || ''} 
-                            onChange={handleInputChange} 
-                            className="input font-mono" 
-                            placeholder="0" 
-                          />
                         </div>
                       </div>
                     </div>

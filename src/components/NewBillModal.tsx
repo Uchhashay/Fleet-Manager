@@ -149,7 +149,11 @@ export function NewBillModal({ isOpen, onClose, prefillClientId }: NewBillModalP
     setLoading(true);
     try {
       const docRef = await addDoc(collection(db, 'b2bClients'), {
-        ...newClient,
+        clientName: newClient.clientName.trim(),
+        contactPerson: newClient.contactPerson || '',
+        contactNumber: newClient.contactNumber || '',
+        address: newClient.address || '',
+        clientType: newClient.clientType || 'Other',
         totalBills: 0,
         totalRevenue: 0,
         createdAt: serverTimestamp(),
@@ -191,7 +195,7 @@ export function NewBillModal({ isOpen, onClose, prefillClientId }: NewBillModalP
         updatedAt: serverTimestamp()
       };
 
-      if (hasAdvance) {
+      if (hasAdvance && advanceDate) {
         billData.advancePaid = advanceAmount;
         billData.advanceDate = Timestamp.fromDate(new Date(advanceDate));
         billData.advanceMode = advanceMode;

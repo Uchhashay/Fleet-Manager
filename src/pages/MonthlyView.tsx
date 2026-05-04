@@ -1,11 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { db } from '../lib/firebase';
-import { collection, getDocs, query, where, orderBy, onSnapshot, deleteDoc, doc, writeBatch } from 'firebase/firestore';
+import { collection, getDocs, query, where, orderBy, onSnapshot, deleteDoc, doc, writeBatch, serverTimestamp, getDoc, addDoc, limit } from 'firebase/firestore';
 import { DailyRecord, Bus, Staff, School } from '../types';
 import { formatCurrency, cn } from '../lib/utils';
 import { handleFirestoreError, OperationType } from '../lib/firebase-utils';
 import { logActivity } from '../lib/activity-logger';
-import { Download, ChevronLeft, ChevronRight, Calendar as CalendarIcon, Table as TableIcon, Bus as BusIcon, Filter, LayoutGrid, AlertCircle, X, User, Fuel, Receipt, Info, Edit2, Save, RotateCcw, Check, Trash2 } from 'lucide-react';
+import { Download, ChevronLeft, ChevronRight, Calendar as CalendarIcon, Table as TableIcon, Bus as BusIcon, Filter, LayoutGrid, AlertCircle, X, User, Fuel, Receipt, Info, Edit2, Save, RotateCcw, Check, Trash2, History, Eye, ArrowRight, MessageSquare } from 'lucide-react';
 import { format, startOfMonth, endOfMonth, eachDayOfInterval, isSameDay, startOfWeek, endOfWeek, parseISO } from 'date-fns';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAuth } from '../contexts/AuthContext';
@@ -32,11 +32,26 @@ export function MonthlyView() {
   const [busesLoading, setBusesLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const [viewMode, setViewMode] = useState<'table' | 'calendar'>('table');
+  const [viewMode, setViewMode] = useState<'table' | 'calendar' | 'log'>('table');
   const [visibleColumns, setVisibleColumns] = useState<Set<string>>(new Set([
     'driver_helper', 'school_staff', 'charter_office', 'private', 'fuel', 'net_coll', 'net_exp', 'balance'
   ]));
   const [isColumnSelectorOpen, setIsColumnSelectorOpen] = useState(false);
+
+  // Log View Filters
+  const [driverFilter, setDriverFilter] = useState<string>('all');
+  const [typeFilter, setTypeFilter] = useState<string>('all');
+  const [showEditedOnly, setShowEditedOnly] = useState(false);
+  const [showNoEntryDates, setShowNoEntryDates] = useState(false);
+
+  // Edit History State
+  const [expandedHistory, setExpandedHistory] = useState<Record<string, boolean>>({});
+  const [fullHistory, setFullHistory] = useState<Record<string, any[]>>({});
+  const [loadingHistory, setLoadingHistory] = useState<Record<string, boolean>>({});
+
+  // Single Record Edit State
+  const [editingRecord, setEditingRecord] = useState<DailyRecord | null>(null);
+  const [isSavingSingle, setIsSavingSingle] = useState(false);
 
   // Bulk Edit State
   const [isEditMode, setIsEditMode] = useState(false);
@@ -66,6 +81,20 @@ export function MonthlyView() {
     { id: 'net_exp', label: 'Net Expense' },
     { id: 'balance', label: 'Balance' },
   ];
+
+  useEffect(() => {
+    const busParam = searchParams.get('busId') || 'all';
+    const monthParam = searchParams.get('month');
+    const startParam = searchParams.get('start');
+    
+    if (busParam !== selectedBus) setSelectedBus(busParam);
+    if (monthParam || startParam) {
+      const date = new Date(monthParam || startParam!);
+      if (date.getTime() !== currentMonth.getTime()) {
+        setCurrentMonth(date);
+      }
+    }
+  }, [searchParams]);
 
   useEffect(() => {
     fetchInitialData();
@@ -125,7 +154,14 @@ export function MonthlyView() {
       const recordsList = recordsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as DailyRecord));
       
       // Sort in memory to avoid complex index requirements
-      const sortedList = recordsList.sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+      const sortedList = recordsList.sort((a, b) => {
+        const dateCompare = (a.date || '').localeCompare(b.date || '');
+        if (dateCompare !== 0) return dateCompare;
+        
+        const aTime = a.created_at?.toMillis?.() || 0;
+        const bTime = b.created_at?.toMillis?.() || 0;
+        return aTime - bTime;
+      });
       setRecords(sortedList);
     } catch (err) {
       console.error('Error fetching records:', err);
@@ -191,6 +227,112 @@ export function MonthlyView() {
     document.body.removeChild(link);
   };
 
+  const handleSaveSingle = async (updatedData: DailyRecord) => {
+    setIsSavingSingle(true);
+    setError(null);
+    try {
+      const docRef = doc(db, 'daily_records', updatedData.id);
+      const existingRecord = records.find(r => r.id === updatedData.id);
+      
+      const now = new Date().toISOString();
+      const firestoreNow = serverTimestamp();
+
+      const dataToSave = {
+        ...updatedData,
+        updated_at: now,
+        has_edit_history: true,
+        last_edited_by: profile?.full_name || 'System',
+        last_edited_at: now
+      };
+
+      const batch = writeBatch(db);
+      batch.set(docRef, dataToSave, { merge: true });
+
+      // Record Edit History
+      if (existingRecord) {
+        const changes: { field: string, oldValue: any, newValue: any }[] = [];
+        const compareFields: (keyof DailyRecord)[] = [
+          'bus_id', 'driver_id', 'helper_id', 'school_morning', 'school_evening', 
+          'school_morning_name', 'school_evening_name', 'charter_morning', 'charter_evening',
+          'private_booking', 'booking_details', 'fuel_amount', 'driver_duty_paid', 'helper_duty_paid',
+          'is_holiday'
+        ];
+
+        const fieldLabels: Record<string, string> = {
+          bus_id: 'Bus',
+          driver_id: 'Driver',
+          helper_id: 'Helper',
+          school_morning: 'Morning school amount',
+          school_evening: 'Evening school amount',
+          school_morning_name: 'Morning school name',
+          school_evening_name: 'Evening school name',
+          charter_morning: 'Charter morning amount',
+          charter_evening: 'Charter evening amount',
+          private_booking: 'Private booking amount',
+          booking_details: 'Booking details',
+          fuel_amount: 'Fuel amount',
+          driver_duty_paid: 'Driver duty paid',
+          helper_duty_paid: 'Helper duty paid',
+          is_holiday: 'Holiday status'
+        };
+
+        compareFields.forEach(field => {
+          const oldValue = (existingRecord as any)[field];
+          const newValue = (updatedData as any)[field];
+          
+          if (newValue !== undefined && oldValue !== newValue) {
+            changes.push({
+              field: fieldLabels[field] || field,
+              oldValue: oldValue === undefined ? null : oldValue,
+              newValue: newValue
+            });
+          }
+        });
+
+        if (changes.length > 0) {
+          const historyRef = collection(docRef, 'editHistory');
+          const newHistoryDoc = doc(historyRef);
+          batch.set(newHistoryDoc, {
+            editedBy: profile?.full_name || 'System',
+            editedByRole: profile?.role || 'unknown',
+            editedAt: firestoreNow,
+            changes
+          });
+        }
+      }
+
+      await batch.commit();
+
+      // Clear history cache for this record to force refetch
+      setFullHistory(prev => {
+        const next = { ...prev };
+        if (updatedData.id) delete next[updatedData.id];
+        return next;
+      });
+
+      // Log activity
+      if (profile) {
+        const busNum = buses.find(b => b.id === updatedData.bus_id)?.registration_number || 'Unknown Bus';
+        await logActivity(
+          profile.full_name,
+          profile.role,
+          'Edited',
+          'Monthly View',
+          `Updated daily record for ${busNum} on ${updatedData.date}`
+        );
+      }
+
+      setSaving(false);
+      await fetchRecords();
+      setEditingRecord(null);
+    } catch (err) {
+      console.error('Error saving record:', err);
+      handleFirestoreError(err, OperationType.WRITE, `daily_records/${updatedData.id}`);
+      setError('Failed to save record. Please try again.');
+    } finally {
+      setIsSavingSingle(false);
+    }
+  };
   const handleSaveBulk = async () => {
     if (Object.keys(localChanges).length === 0) {
       setIsEditMode(false);
@@ -202,23 +344,100 @@ export function MonthlyView() {
     try {
       const batch = writeBatch(db);
       const now = new Date().toISOString();
+      const firestoreNow = serverTimestamp();
       
-      (Object.values(localChanges) as DailyRecord[]).forEach(record => {
+      const changeEntries = Object.entries(localChanges);
+
+      for (const [key, record] of changeEntries) {
         const docRef = record.id 
           ? doc(db, 'daily_records', record.id)
           : doc(collection(db, 'daily_records'));
-          
+        
+        let existingRecord: DailyRecord | null = null;
+        if (record.id) {
+          existingRecord = records.find(r => r.id === record.id) || null;
+        }
+
         const dataToSave = {
           ...record,
           id: record.id || docRef.id,
           created_by: record.created_by || profile?.id || 'unknown',
           created_at: record.created_at || now,
+          updated_at: now,
+          has_edit_history: true,
+          last_edited_by: profile?.full_name || 'System',
+          last_edited_at: now
         };
         
         batch.set(docRef, dataToSave, { merge: true });
-      });
+
+        // Record Edit History
+        if (existingRecord) {
+          const changes: { field: string, oldValue: any, newValue: any }[] = [];
+          
+          const compareFields: (keyof DailyRecord)[] = [
+            'bus_id', 'driver_id', 'helper_id', 'school_morning', 'school_evening', 
+            'school_morning_name', 'school_evening_name', 'charter_morning', 'charter_evening',
+            'private_booking', 'booking_details', 'fuel_amount', 'driver_duty_paid', 'helper_duty_paid',
+            'is_holiday'
+          ];
+
+          const fieldLabels: Record<string, string> = {
+            bus_id: 'Bus',
+            driver_id: 'Driver',
+            helper_id: 'Helper',
+            school_morning: 'Morning school amount',
+            school_evening: 'Evening school amount',
+            school_morning_name: 'Morning school name',
+            school_evening_name: 'Evening school name',
+            charter_morning: 'Charter morning amount',
+            charter_evening: 'Charter evening amount',
+            private_booking: 'Private booking amount',
+            booking_details: 'Booking details',
+            fuel_amount: 'Fuel amount',
+            driver_duty_paid: 'Driver duty paid',
+            helper_duty_paid: 'Helper duty paid',
+            is_holiday: 'Holiday status'
+          };
+
+          compareFields.forEach(field => {
+            const oldValue = existingRecord![field];
+            const newValue = record[field as keyof typeof record];
+            
+            if (newValue !== undefined && oldValue !== newValue) {
+              changes.push({
+                field: fieldLabels[field] || field,
+                oldValue: oldValue === undefined ? null : oldValue,
+                newValue: newValue
+              });
+            }
+          });
+
+          if (changes.length > 0) {
+            const historyRef = collection(docRef, 'editHistory');
+            const historyEntry = {
+              editedBy: profile?.full_name || 'System',
+              editedByRole: profile?.role || 'unknown',
+              editedAt: firestoreNow,
+              changes
+            };
+            // Batches don't support addDoc directly with auto-ids for subcollections easily without doc()
+            const newHistoryDoc = doc(historyRef);
+            batch.set(newHistoryDoc, historyEntry);
+          }
+        }
+      }
 
       await batch.commit();
+
+      // Clear history cache for all updated records
+      setFullHistory(prev => {
+        const next = { ...prev };
+        Object.values(localChanges).forEach(r => {
+          if (r.id) delete next[r.id];
+        });
+        return next;
+      });
 
       // Log activity
       if (profile) {
@@ -239,6 +458,7 @@ export function MonthlyView() {
       setLocalChanges({});
     } catch (err) {
       console.error('Error saving bulk changes:', err);
+      handleFirestoreError(err, OperationType.WRITE, 'daily_records/bulk');
       setError('Failed to save changes. Please try again.');
     } finally {
       setSaving(false);
@@ -294,11 +514,55 @@ export function MonthlyView() {
       setSelectedDay(null);
     } catch (err) {
       console.error('Error deleting record:', err);
+      handleFirestoreError(err, OperationType.DELETE, `daily_records/${recordId}`);
       setError('Failed to delete record. Please try again.');
     }
   };
 
-  const totals = records.reduce((acc, curr) => {
+  const fetchFullHistory = async (recordId: string) => {
+    if (fullHistory[recordId]) return;
+    setLoadingHistory(prev => ({ ...prev, [recordId]: true }));
+    try {
+      const historySnap = await getDocs(query(
+        collection(db, 'daily_records', recordId, 'editHistory'),
+        orderBy('editedAt', 'desc')
+      ));
+      const historyItems = historySnap.docs.map(doc => {
+        const data = doc.data();
+        return {
+          id: doc.id,
+          ...data,
+          editedAt: data.editedAt?.toDate() || new Date()
+        };
+      });
+      setFullHistory(prev => ({ ...prev, [recordId]: historyItems }));
+    } catch (err) {
+      console.error('Error fetching history:', err);
+    } finally {
+      setLoadingHistory(prev => ({ ...prev, [recordId]: false }));
+    }
+  };
+
+  const filteredRecords = records.filter(record => {
+    // Bus filter is already handled by fetchRecords (Firestore query)
+    // but in case of local updates or if we want to filter further:
+    if (selectedBus !== 'all' && record.bus_id !== selectedBus) return false;
+    if (driverFilter !== 'all' && record.driver_id !== driverFilter) return false;
+    if (showEditedOnly && !record.has_edit_history) return false;
+    
+    if (typeFilter !== 'all') {
+      const hasValue = (val: number | undefined) => (val || 0) > 0;
+      switch (typeFilter) {
+        case 'school': if (!hasValue(record.school_morning) && !hasValue(record.school_evening)) return false; break;
+        case 'charter': if (!hasValue(record.charter_morning) && !hasValue(record.charter_evening)) return false; break;
+        case 'private': if (!hasValue(record.private_booking)) return false; break;
+      }
+    }
+    
+    return true;
+  });
+
+  const totals = filteredRecords.reduce((acc, curr) => {
     const record = localChanges[curr.id] || curr;
     return {
       school_morning: acc.school_morning + (record.school_morning || 0),
@@ -316,11 +580,7 @@ export function MonthlyView() {
   const totalNetCollection = 
     (totals.school_morning + totals.school_evening + totals.charter_morning + totals.charter_evening + totals.private_booking);
 
-  if (loading || busesLoading) return (
-    <div className="flex items-center justify-center min-h-[400px]">
-      <div className="h-6 w-6 animate-spin rounded-full border-2 border-accent border-t-transparent"></div>
-    </div>
-  );
+  const editedRecordsCount = records.filter(r => r.has_edit_history).length;
 
   if (error) return (
     <div className="flex flex-col items-center justify-center min-h-[400px] space-y-4">
@@ -341,6 +601,8 @@ export function MonthlyView() {
       </button>
     </div>
   );
+
+  const isLoading = loading || busesLoading;
 
   return (
     <div className="space-y-10">
@@ -374,6 +636,16 @@ export function MonthlyView() {
             >
               <LayoutGrid className="h-3 w-3 stroke-[1.5px]" />
               <span>Calendar</span>
+            </button>
+            <button 
+              onClick={() => setViewMode('log')}
+              className={cn(
+                "flex items-center space-x-2 rounded-lg px-4 py-2 text-[10px] font-bold uppercase tracking-widest transition-all",
+                viewMode === 'log' ? "bg-background text-primary shadow-sm" : "text-secondary hover:text-primary"
+              )}
+            >
+              <History className="h-3 w-3 stroke-[1.5px]" />
+              <span>Log</span>
             </button>
           </div>
 
@@ -540,7 +812,12 @@ export function MonthlyView() {
         animate={{ opacity: 1, y: 0 }}
         className="space-y-6"
       >
-        {viewMode === 'table' ? (
+        {isLoading ? (
+        <div className="flex flex-col items-center justify-center min-h-[300px] card bg-surface/30 border-dashed">
+          <div className="h-6 w-6 animate-spin rounded-full border-2 border-accent border-t-transparent mb-4"></div>
+          <p className="text-xs font-bold text-secondary uppercase tracking-widest">Loading records...</p>
+        </div>
+      ) : viewMode === 'table' ? (
           <div className="card overflow-hidden !p-0 border-border/50">
             <div className="overflow-x-auto">
               <table className="w-full text-left text-sm border-collapse">
@@ -661,7 +938,18 @@ export function MonthlyView() {
                         >
                           <td className="sticky left-0 z-10 bg-background px-6 py-4 font-mono text-xs group-hover:bg-accent/5 transition-colors border-r border-border/10">
                             <div className="flex flex-col">
-                              <span>{format(day, 'dd MMM')}</span>
+                              <div className="flex items-center space-x-2">
+                                <span>{format(day, 'dd MMM')}</span>
+                                {r?.has_edit_history && (
+                                  <div 
+                                    className="px-1.5 py-0.5 rounded-full bg-amber-100 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400 text-[8px] font-bold uppercase cursor-help flex items-center space-x-1"
+                                    title={`Last edited by ${r.last_edited_by} on ${format(parseISO(r.last_edited_at!), 'dd MMM HH:mm')}`}
+                                  >
+                                    <Edit2 className="h-2 w-2" />
+                                    <span>Edited</span>
+                                  </div>
+                                )}
+                              </div>
                               {selectedBus === 'all' && (
                                 <div className="mt-1">
                                   {isEditMode ? (
@@ -739,22 +1027,12 @@ export function MonthlyView() {
                                         <option key={s.id} value={s.name}>{s.name}</option>
                                       ))}
                                     </select>
-                                    <input 
-                                      type="number" 
-                                      value={r?.school_morning || 0}
-                                      onChange={(e) => handleLocalChange(row.date, r?.bus_id || row.busId, 'school_morning', Number(e.target.value), record)}
-                                      className="w-24 text-center text-[10px] bg-background border border-border rounded px-1 py-0.5 font-mono"
-                                      placeholder="Amount"
-                                    />
                                   </div>
                                 ) : (
                                   <div className="flex flex-col items-center">
                                     <span className="font-bold text-primary truncate max-w-[80px]" title={r?.school_morning_name}>
                                       {isSummarized ? '-' : (r?.school_morning_name || '-')}
                                     </span>
-                                    {school_morning > 0 && (
-                                      <span className="text-[9px] text-secondary font-mono">{formatCurrency(school_morning)}</span>
-                                    )}
                                   </div>
                                 )}
                               </td>
@@ -771,22 +1049,12 @@ export function MonthlyView() {
                                         <option key={s.id} value={s.name}>{s.name}</option>
                                       ))}
                                     </select>
-                                    <input 
-                                      type="number" 
-                                      value={r?.school_evening || 0}
-                                      onChange={(e) => handleLocalChange(row.date, r?.bus_id || row.busId, 'school_evening', Number(e.target.value), record)}
-                                      className="w-24 text-center text-[10px] bg-background border border-border rounded px-1 py-0.5 font-mono"
-                                      placeholder="Amount"
-                                    />
                                   </div>
                                 ) : (
                                   <div className="flex flex-col items-center">
                                     <span className="font-bold text-primary truncate max-w-[80px]" title={r?.school_evening_name}>
                                       {isSummarized ? '-' : (r?.school_evening_name || '-')}
                                     </span>
-                                    {school_evening > 0 && (
-                                      <span className="text-[9px] text-secondary font-mono">{formatCurrency(school_evening)}</span>
-                                    )}
                                   </div>
                                 )}
                               </td>
@@ -933,7 +1201,7 @@ export function MonthlyView() {
               </table>
             </div>
           </div>
-        ) : (
+        ) : viewMode === 'calendar' ? (
           <div className="card !p-0 overflow-hidden border-border/50">
             <div className="grid grid-cols-7 gap-px bg-border/30">
               {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(day => (
@@ -1006,10 +1274,591 @@ export function MonthlyView() {
               })()}
             </div>
           </div>
+        ) : (
+          <div className="space-y-6">
+            {/* Summary Strip */}
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+              <div className="card p-4 bg-surface border-border/50">
+                <p className="text-[9px] font-bold text-secondary uppercase tracking-widest mb-1">Total Entries</p>
+                <div className="flex items-baseline space-x-1">
+                  <span className="text-xl font-bold text-primary">{filteredRecords.length}</span>
+                  <span className="text-[10px] text-secondary font-medium">units</span>
+                </div>
+              </div>
+              <div className="card p-4 bg-surface border-border/50">
+                <p className="text-[9px] font-bold text-secondary uppercase tracking-widest mb-1">Total Collection</p>
+                <p className="text-xl font-bold text-accent font-mono">{formatCurrency(totalNetCollection)}</p>
+              </div>
+              <div className="card p-4 bg-surface border-border/50">
+                <p className="text-[9px] font-bold text-secondary uppercase tracking-widest mb-1">Total Expenses</p>
+                <p className="text-xl font-bold text-danger font-mono">{formatCurrency(totals.net_expense)}</p>
+              </div>
+              <div className="card p-4 bg-surface border-border/50">
+                <p className="text-[9px] font-bold text-secondary uppercase tracking-widest mb-1">Net Balance</p>
+                <p className={cn(
+                  "text-xl font-bold font-mono",
+                  totalNetCollection - totals.net_expense >= 0 ? "text-success" : "text-danger"
+                )}>
+                  {formatCurrency(totalNetCollection - totals.net_expense)}
+                </p>
+              </div>
+              <div className="card p-4 bg-surface border-border/50">
+                <p className="text-[9px] font-bold text-secondary uppercase tracking-widest mb-1">Days with Entry</p>
+                <div className="flex items-baseline space-x-1">
+                  <span className="text-xl font-bold text-primary">{new Set(filteredRecords.map(r => r.date)).size}</span>
+                  <span className="text-[10px] text-secondary font-medium">/ {daysInMonth.length}</span>
+                </div>
+              </div>
+              <button 
+                onClick={() => setShowEditedOnly(!showEditedOnly)}
+                className={cn(
+                  "card p-4 border-border/50 transition-all text-left",
+                  showEditedOnly ? "bg-amber-500/10 border-amber-500/30 text-amber-600" : "bg-surface text-secondary hover:bg-surface/50"
+                )}
+              >
+                <p className="text-[9px] font-bold uppercase tracking-widest mb-1">Edited Entries</p>
+                <div className="flex items-center space-x-2">
+                  <span className={cn("text-xl font-bold", showEditedOnly ? "text-amber-600" : "text-primary")}>
+                    {editedRecordsCount}
+                  </span>
+                  <Edit2 className={cn("h-4 w-4", showEditedOnly ? "text-amber-500" : "text-secondary")} />
+                </div>
+              </button>
+            </div>
+
+            {/* Filters */}
+            <div className="card p-4 bg-surface border-border/50 flex flex-wrap items-center gap-4">
+              <div className="flex items-center space-x-2">
+                <Filter className="h-4 w-4 text-secondary" />
+                <span className="text-[10px] font-bold text-secondary uppercase tracking-widest">Filters</span>
+              </div>
+              
+              <div className="w-px h-6 bg-border mx-2 hidden lg:block" />
+
+              <div className="flex flex-wrap items-center gap-3">
+                <select 
+                  value={selectedBus}
+                  onChange={(e) => setSelectedBus(e.target.value)}
+                  className="bg-background border border-border rounded-lg px-3 py-1.5 text-xs font-medium text-primary outline-none focus:ring-2 focus:ring-accent/20"
+                >
+                  <option value="all">All Buses</option>
+                  {buses.map(bus => (
+                    <option key={bus.id} value={bus.id}>{bus.registration_number}</option>
+                  ))}
+                </select>
+
+                <select 
+                  value={driverFilter}
+                  onChange={(e) => setDriverFilter(e.target.value)}
+                  className="bg-background border border-border rounded-lg px-3 py-1.5 text-xs font-medium text-primary outline-none focus:ring-2 focus:ring-accent/20"
+                >
+                  <option value="all">All Drivers</option>
+                  {staff.filter(s => s.role === 'driver').map(s => (
+                    <option key={s.id} value={s.id}>{s.full_name}</option>
+                  ))}
+                </select>
+
+                <select 
+                  value={typeFilter}
+                  onChange={(e) => setTypeFilter(e.target.value)}
+                  className="bg-background border border-border rounded-lg px-3 py-1.5 text-xs font-medium text-primary outline-none focus:ring-2 focus:ring-accent/20"
+                >
+                  <option value="all">All Types</option>
+                  <option value="school">School</option>
+                  <option value="charter">Charter</option>
+                  <option value="private">Private</option>
+                </select>
+
+                <div className="flex items-center space-x-4 ml-2">
+                  <label className="flex items-center space-x-2 cursor-pointer group">
+                    <div 
+                      className={cn(
+                        "w-4 h-4 rounded border flex items-center justify-center transition-all",
+                        showEditedOnly ? "bg-accent border-accent" : "border-border group-hover:border-accent/40"
+                      )}
+                      onClick={() => setShowEditedOnly(!showEditedOnly)}
+                    >
+                      {showEditedOnly && <Check className="h-3 w-3 text-white" />}
+                    </div>
+                    <span className="text-[10px] font-bold text-secondary uppercase tracking-widest select-none">Show Edited Only</span>
+                  </label>
+
+                  <label className="flex items-center space-x-2 cursor-pointer group">
+                    <div 
+                      className={cn(
+                        "w-4 h-4 rounded border flex items-center justify-center transition-all",
+                        showNoEntryDates ? "bg-accent border-accent" : "border-border group-hover:border-accent/40"
+                      )}
+                      onClick={() => setShowNoEntryDates(!showNoEntryDates)}
+                    >
+                      {showNoEntryDates && <Check className="h-3 w-3 text-white" />}
+                    </div>
+                    <span className="text-[10px] font-bold text-secondary uppercase tracking-widest select-none">Show No Entry Dates</span>
+                  </label>
+                </div>
+              </div>
+            </div>
+
+            {/* Log Entries */}
+            <div className="space-y-8">
+              {[...daysInMonth].reverse().map(day => {
+                const dateStr = format(day, 'yyyy-MM-dd');
+                const dayRecords = filteredRecords.filter(r => r.date === dateStr);
+                
+                if (dayRecords.length === 0 && !showNoEntryDates) return null;
+
+                const dayTotal = dayRecords.reduce((sum, r) => 
+                  sum + (r.school_morning || 0) + (r.school_evening || 0) + (r.charter_morning || 0) + (r.charter_evening || 0) + (r.private_booking || 0), 0
+                );
+
+                return (
+                  <div key={dateStr} className="space-y-4">
+                    <div className="flex items-center justify-between sticky top-0 md:top-[8.5rem] z-10 bg-background py-2 backdrop-blur-md">
+                      <div className="flex items-center space-x-3">
+                        <div className="h-8 w-8 rounded-lg bg-surface border border-border flex items-center justify-center font-bold text-primary font-mono">
+                          {format(day, 'dd')}
+                        </div>
+                        <div>
+                          <h3 className="text-sm font-bold text-primary">{format(day, 'MMMM yyyy')} — {format(day, 'EEEE')}</h3>
+                        </div>
+                      </div>
+                      <div className="flex items-center space-x-2">
+                        <span className="text-[10px] font-bold text-secondary uppercase tracking-widest">Day Total:</span>
+                        <span className="text-sm font-bold text-accent font-mono">{formatCurrency(dayTotal)}</span>
+                      </div>
+                    </div>
+
+                    <div className="space-y-3 pl-11 border-l-2 border-border/30 ml-4">
+                      {dayRecords.map(record => {
+                        const bus = buses.find(b => b.id === record.bus_id);
+                        const driver = staff.find(s => s.id === record.driver_id);
+                        const helper = staff.find(s => s.id === record.helper_id);
+                        const netCollection = (record.school_morning || 0) + (record.school_evening || 0) + (record.charter_morning || 0) + (record.charter_evening || 0) + (record.private_booking || 0);
+                        const netExpense = (record.fuel_amount || 0) + (record.driver_duty_paid || 0) + (record.helper_duty_paid || 0);
+                        const balance = netCollection - netExpense;
+
+                        return (
+                          <motion.div 
+                            key={record.id}
+                            layout
+                            className="card bg-surface border-border/50 hover:border-accent/20 transition-all shadow-sm"
+                          >
+                            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                              <div className="space-y-3 flex-1">
+                                <div className="flex items-center space-x-3">
+                                  <div className="h-8 w-8 rounded-lg bg-accent/10 flex items-center justify-center text-accent">
+                                    <BusIcon className="h-4 w-4 stroke-[1.5px]" />
+                                  </div>
+                                  <div>
+                                    <h4 className="text-sm font-bold text-primary">{bus?.registration_number || 'N/A'}</h4>
+                                    <p className="text-[10px] text-secondary font-medium">
+                                      {driver?.full_name || 'No Driver'} / {helper?.full_name || 'No Helper'}
+                                    </p>
+                                  </div>
+                                </div>
+
+                                <div className="flex flex-wrap gap-1.5">
+                                  {(record.school_morning || 0) > 0 && <span className="px-2 py-0.5 rounded-full bg-accent/5 text-accent text-[8px] font-bold uppercase tracking-tighter">School Morning</span>}
+                                  {(record.school_evening || 0) > 0 && <span className="px-2 py-0.5 rounded-full bg-accent/5 text-accent text-[8px] font-bold uppercase tracking-tighter">School Evening</span>}
+                                  {(record.charter_morning || 0) > 0 && <span className="px-1.5 py-0.5 rounded-full bg-secondary/5 text-secondary text-[8px] font-bold uppercase tracking-tighter">Charter AM</span>}
+                                  {(record.charter_evening || 0) > 0 && <span className="px-1.5 py-0.5 rounded-full bg-secondary/5 text-secondary text-[8px] font-bold uppercase tracking-tighter">Charter PM</span>}
+                                  {(record.private_booking || 0) > 0 && <span className="px-2 py-0.5 rounded-full bg-success/5 text-success text-[8px] font-bold uppercase tracking-tighter">Private</span>}
+                                  {record.is_holiday && <span className="px-2 py-0.5 rounded-full bg-warning/5 text-warning text-[8px] font-bold uppercase tracking-tighter">Holiday</span>}
+                                </div>
+                              </div>
+
+                              <div className="flex flex-wrap items-center gap-6 md:gap-10">
+                                <div className="space-y-1">
+                                  <p className="text-[8px] font-bold text-secondary uppercase tracking-widest">Net Coll.</p>
+                                  <p className="text-sm font-bold text-primary font-mono">{formatCurrency(netCollection)}</p>
+                                </div>
+                                <div className="space-y-1">
+                                  <p className="text-[8px] font-bold text-secondary uppercase tracking-widest">Expenses</p>
+                                  <p className="text-sm font-bold text-danger/70 font-mono">{formatCurrency(netExpense)}</p>
+                                </div>
+                                <div className="space-y-1">
+                                  <p className="text-[8px] font-bold text-secondary uppercase tracking-widest">Balance</p>
+                                  <p className={cn("text-sm font-bold font-mono", balance >= 0 ? "text-success" : "text-danger")}>
+                                    {formatCurrency(balance)}
+                                  </p>
+                                </div>
+                                <div className="flex items-center space-x-2">
+                                  <button 
+                                    onClick={() => setEditingRecord(record)}
+                                    className="p-2 rounded-lg bg-surface border border-border hover:bg-background text-secondary hover:text-primary transition-all"
+                                    title="Edit Record"
+                                  >
+                                    <Edit2 className="h-4 w-4" />
+                                  </button>
+                                  {canEdit && (
+                                    <button 
+                                      onClick={() => handleDeleteRecord(record.id)}
+                                      className="p-2 rounded-lg bg-surface border border-border hover:bg-danger/10 text-secondary hover:text-danger transition-all"
+                                      title="Delete Record"
+                                    >
+                                      <Trash2 className="h-4 w-4" />
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+
+                            {/* Edit History Section */}
+                            {record.has_edit_history && (
+                              <div className="mt-4 pt-4 border-t border-border/50">
+                                <div 
+                                  className="bg-amber-100/50 dark:bg-amber-900/10 rounded-xl p-3 border border-amber-200/50 dark:border-amber-900/20"
+                                >
+                                  <div className="flex items-center justify-between mb-2">
+                                    <div className="flex items-center space-x-2 text-[10px] font-bold text-amber-700 dark:text-amber-400 uppercase tracking-widest">
+                                      <Edit2 className="h-3 w-3" />
+                                      <span>Latest Edit by {record.last_edited_by}</span>
+                                      <span className="text-amber-500/50 text-[8px]">•</span>
+                                      <span>{format(parseISO(record.last_edited_at!), 'dd MMM, HH:mm')}</span>
+                                    </div>
+                                    <button 
+                                      onClick={() => {
+                                        const next = !expandedHistory[record.id];
+                                        setExpandedHistory(prev => ({ ...prev, [record.id]: next }));
+                                        if (next) fetchFullHistory(record.id);
+                                      }}
+                                      className="flex items-center space-x-1 text-[9px] font-bold text-amber-600 hover:text-amber-700 uppercase tracking-tighter"
+                                    >
+                                      <span>{expandedHistory[record.id] ? 'Hide History' : 'Full History'}</span>
+                                      {expandedHistory[record.id] ? <X className="h-2.5 w-2.5" /> : <ChevronRight className="h-2.5 w-2.5" />}
+                                    </button>
+                                  </div>
+
+                                  <AnimatePresence>
+                                    {expandedHistory[record.id] ? (
+                                      <motion.div 
+                                        initial={{ height: 0, opacity: 0 }}
+                                        animate={{ height: 'auto', opacity: 1 }}
+                                        exit={{ height: 0, opacity: 0 }}
+                                        className="overflow-hidden"
+                                      >
+                                        {loadingHistory[record.id] ? (
+                                          <div className="py-2 flex items-center justify-center">
+                                            <div className="h-3 w-3 animate-spin rounded-full border-2 border-amber-400 border-t-transparent" />
+                                          </div>
+                                        ) : (
+                                          <div className="space-y-4 pt-2">
+                                            {fullHistory[record.id]?.map((history, hIdx) => (
+                                              <div key={history.id} className={cn("space-y-2", hIdx > 0 && "pt-3 border-t border-amber-200/50")}>
+                                                <div className="flex items-center justify-between text-[8px] font-bold text-amber-600/60 uppercase">
+                                                  <span>{history.editedBy} ({history.editedByRole})</span>
+                                                  <span>{format(history.editedAt, 'dd MMM yyyy, HH:mm')}</span>
+                                                </div>
+                                                <div className="space-y-1">
+                                                  {history.changes.map((change: any, cIdx: number) => (
+                                                    <div key={cIdx} className="flex items-center space-x-2 text-[10px]">
+                                                      <span className="text-secondary/70">• {change.field}:</span>
+                                                      <span className="text-danger/60 line-through truncate max-w-[80px]">{String(change.oldValue || 'N/A')}</span>
+                                                      <ArrowRight className="h-2 w-2 text-secondary" />
+                                                      <span className="text-success font-bold truncate max-w-[80px]">{String(change.newValue || 'N/A')}</span>
+                                                    </div>
+                                                  ))}
+                                                </div>
+                                              </div>
+                                            ))}
+                                          </div>
+                                        )}
+                                      </motion.div>
+                                    ) : (
+                                      <div className="text-[10px] text-amber-700/70 italic flex items-center space-x-1">
+                                        <MessageSquare className="h-2.5 w-2.5" />
+                                        <span>Click "Full History" to see detailed changes.</span>
+                                      </div>
+                                    )}
+                                  </AnimatePresence>
+                                </div>
+                              </div>
+                            )}
+                          </motion.div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
+
+              {filteredRecords.length === 0 && (
+                <div className="py-20 text-center card bg-surface">
+                  <div className="h-12 w-12 rounded-full bg-border/30 flex items-center justify-center mx-auto mb-4">
+                    <History className="h-6 w-6 text-secondary" />
+                  </div>
+                  <h3 className="text-primary font-bold text-lg">No entries found</h3>
+                  <p className="text-secondary text-sm">No records match your current filter selection.</p>
+                  <button 
+                    onClick={() => {
+                      setSelectedBus('all');
+                      setDriverFilter('all');
+                      setTypeFilter('all');
+                      setShowEditedOnly(false);
+                      setShowNoEntryDates(false);
+                    }}
+                    className="mt-6 text-accent font-bold text-xs uppercase tracking-widest hover:underline"
+                  >
+                    Clear all filters
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
         )}
       </motion.div>
 
       <AnimatePresence>
+        {editingRecord && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => !isSavingSingle && setEditingRecord(null)}
+              className="absolute inset-0 bg-background/80 backdrop-blur-sm"
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="relative w-full max-w-2xl bg-surface border border-border rounded-2xl shadow-2xl overflow-hidden max-h-[90vh] flex flex-col"
+            >
+              <div className="flex items-center justify-between p-6 border-b border-border bg-surface/50">
+                <div className="flex items-center space-x-3">
+                  <div className="h-10 w-10 rounded-xl bg-accent/10 flex items-center justify-center text-accent">
+                    <Edit2 className="h-5 w-5 stroke-[1.5px]" />
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-bold text-primary">Edit Daily Record</h3>
+                    <p className="text-[10px] font-bold text-secondary uppercase tracking-widest">{format(parseISO(editingRecord.date), 'EEEE, dd MMMM yyyy')}</p>
+                  </div>
+                </div>
+                <button 
+                  onClick={() => setEditingRecord(null)}
+                  className="p-2 rounded-lg hover:bg-border/50 text-secondary hover:text-primary transition-colors"
+                  disabled={isSavingSingle}
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+
+              <div className="flex-1 overflow-y-auto p-6 space-y-6">
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <label className="label">Bus</label>
+                    <select
+                      value={editingRecord.bus_id}
+                      onChange={(e) => setEditingRecord({ ...editingRecord, bus_id: e.target.value })}
+                      className="input"
+                    >
+                      {buses.map(b => (
+                        <option key={b.id} value={b.id}>{b.registration_number}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="flex items-center justify-end pt-8">
+                    <label className="flex items-center space-x-3 cursor-pointer group">
+                      <span className="text-xs font-bold text-secondary uppercase tracking-widest select-none">Holiday Mode</span>
+                      <div 
+                        onClick={() => setEditingRecord({ ...editingRecord, is_holiday: !editingRecord.is_holiday })}
+                        className={cn(
+                          "relative inline-flex h-5 w-9 items-center rounded-full transition-colors duration-300",
+                          editingRecord.is_holiday ? "bg-accent" : "bg-border"
+                        )}
+                      >
+                        <span className={cn(
+                          "inline-block h-3 w-3 transform rounded-full bg-white transition-transform duration-300",
+                          editingRecord.is_holiday ? "translate-x-5" : "translate-x-1"
+                        )} />
+                      </div>
+                    </label>
+                  </div>
+                </div>
+
+                <div className={cn("grid grid-cols-2 gap-4", editingRecord.is_holiday && "opacity-40 grayscale")}>
+                  <div className="space-y-2">
+                    <label className="label">Driver</label>
+                    <select
+                      value={editingRecord.driver_id}
+                      onChange={(e) => setEditingRecord({ ...editingRecord, driver_id: e.target.value })}
+                      className="input"
+                      disabled={editingRecord.is_holiday}
+                    >
+                      <option value="">Select Driver</option>
+                      {staff.filter(s => s.role === 'driver').map(s => (
+                        <option key={s.id} value={s.id}>{s.full_name}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="space-y-2">
+                    <label className="label">Helper</label>
+                    <select
+                      value={editingRecord.helper_id || ''}
+                      onChange={(e) => setEditingRecord({ ...editingRecord, helper_id: e.target.value })}
+                      className="input"
+                      disabled={editingRecord.is_holiday}
+                    >
+                      <option value="">Select Helper</option>
+                      {staff.filter(s => s.role === 'helper').map(s => (
+                        <option key={s.id} value={s.id}>{s.full_name}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                <div className={cn("space-y-4 pt-4 border-t border-border", editingRecord.is_holiday && "opacity-40 grayscale")}>
+                  <h4 className="text-[10px] font-bold text-secondary uppercase tracking-widest flex items-center space-x-2">
+                    <Receipt className="h-3 w-3" />
+                    <span>School Route Details</span>
+                  </h4>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <label className="label !mb-0 text-[10px]">Morning School</label>
+                      <select
+                        value={editingRecord.school_morning_name || ''}
+                        onChange={(e) => setEditingRecord({ ...editingRecord, school_morning_name: e.target.value })}
+                        className="input"
+                        disabled={editingRecord.is_holiday}
+                      >
+                        <option value="">Select School</option>
+                        {schools.map(s => (
+                          <option key={s.id} value={s.name}>{s.name}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="space-y-2">
+                      <label className="label !mb-0 text-[10px]">Evening School</label>
+                      <select
+                        value={editingRecord.school_evening_name || ''}
+                        onChange={(e) => setEditingRecord({ ...editingRecord, school_evening_name: e.target.value })}
+                        className="input"
+                        disabled={editingRecord.is_holiday}
+                      >
+                        <option value="">Select School</option>
+                        {schools.map(s => (
+                          <option key={s.id} value={s.name}>{s.name}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                </div>
+
+                <div className={cn("space-y-4 pt-4 border-t border-border", editingRecord.is_holiday && "opacity-40 grayscale")}>
+                  <h4 className="text-[10px] font-bold text-secondary uppercase tracking-widest flex items-center space-x-2">
+                    <LayoutGrid className="h-3 w-3" />
+                    <span>Other Collections & Expenses</span>
+                  </h4>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    <div className="space-y-2">
+                      <label className="label">Charter AM</label>
+                      <input 
+                        type="number" 
+                        value={editingRecord.charter_morning}
+                        onChange={(e) => setEditingRecord({ ...editingRecord, charter_morning: Number(e.target.value) })}
+                        className="input font-mono"
+                        disabled={editingRecord.is_holiday}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <label className="label">Charter PM</label>
+                      <input 
+                        type="number" 
+                        value={editingRecord.charter_evening}
+                        onChange={(e) => setEditingRecord({ ...editingRecord, charter_evening: Number(e.target.value) })}
+                        className="input font-mono"
+                        disabled={editingRecord.is_holiday}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <label className="label">Private</label>
+                      <input 
+                        type="number" 
+                        value={editingRecord.private_booking}
+                        onChange={(e) => setEditingRecord({ ...editingRecord, private_booking: Number(e.target.value) })}
+                        className="input font-mono"
+                        disabled={editingRecord.is_holiday}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <label className="label">Fuel</label>
+                      <input 
+                        type="number" 
+                        value={editingRecord.fuel_amount}
+                        onChange={(e) => setEditingRecord({ ...editingRecord, fuel_amount: Number(e.target.value) })}
+                        className="input font-mono text-warning"
+                        disabled={editingRecord.is_holiday}
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <div className={cn("grid grid-cols-2 gap-4 pt-4 border-t border-border", editingRecord.is_holiday && "opacity-40 grayscale")}>
+                  <div className="space-y-2">
+                    <label className="label">Driver Duty Paid</label>
+                    <input 
+                      type="number" 
+                      value={editingRecord.driver_duty_paid}
+                      onChange={(e) => setEditingRecord({ ...editingRecord, driver_duty_paid: Number(e.target.value) })}
+                      className="input font-mono text-danger"
+                      disabled={editingRecord.is_holiday}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="label">Helper Duty Paid</label>
+                    <input 
+                      type="number" 
+                      value={editingRecord.helper_duty_paid}
+                      onChange={(e) => setEditingRecord({ ...editingRecord, helper_duty_paid: Number(e.target.value) })}
+                      className="input font-mono text-danger"
+                      disabled={editingRecord.is_holiday}
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-2 pt-4 border-t border-border">
+                  <label className="label">Booking Details / Notes</label>
+                  <textarea 
+                    value={editingRecord.booking_details || ''}
+                    onChange={(e) => setEditingRecord({ ...editingRecord, booking_details: e.target.value })}
+                    className="input min-h-[80px]"
+                    placeholder="Enter any additional details..."
+                  />
+                </div>
+              </div>
+
+              <div className="p-6 border-t border-border bg-surface/50 flex items-center justify-between">
+                <div className="flex flex-col">
+                  <span className="text-[10px] font-bold text-secondary uppercase tracking-widest">Net Balance</span>
+                  <span className={cn(
+                    "text-lg font-bold font-mono",
+                    ((editingRecord.school_morning || 0) + (editingRecord.school_evening || 0) + (editingRecord.charter_morning || 0) + (editingRecord.charter_evening || 0) + (editingRecord.private_booking || 0) - (editingRecord.fuel_amount || 0) - (editingRecord.driver_duty_paid || 0) - (editingRecord.helper_duty_paid || 0)) >= 0 ? "text-success" : "text-danger"
+                  )}>
+                    {formatCurrency((editingRecord.school_morning || 0) + (editingRecord.school_evening || 0) + (editingRecord.charter_morning || 0) + (editingRecord.charter_evening || 0) + (editingRecord.private_booking || 0) - (editingRecord.fuel_amount || 0) - (editingRecord.driver_duty_paid || 0) - (editingRecord.helper_duty_paid || 0))}
+                  </span>
+                </div>
+                <div className="flex items-center space-x-3">
+                  <button
+                    onClick={() => setEditingRecord(null)}
+                    className="btn-secondary"
+                    disabled={isSavingSingle}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={() => handleSaveSingle(editingRecord)}
+                    className="btn-primary flex items-center space-x-2"
+                    disabled={isSavingSingle}
+                  >
+                    {isSavingSingle && <div className="h-3 w-3 animate-spin rounded-full border-2 border-white border-t-transparent" />}
+                    <span>{isSavingSingle ? 'Saving...' : 'Save Changes'}</span>
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+
         {selectedDay && (
           <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
             <motion.div
@@ -1098,14 +1947,26 @@ export function MonthlyView() {
                                 {record.is_holiday && (
                                   <span className="px-2 py-1 rounded-md bg-warning/10 text-warning text-[8px] font-bold uppercase tracking-widest">Holiday</span>
                                 )}
-                                {profile?.role === 'admin' && (
-                                  <button
-                                    onClick={() => handleDeleteRecord(record.id)}
-                                    className="p-2 text-secondary hover:text-danger hover:bg-danger/10 rounded-lg transition-all"
-                                    title="Delete Record"
-                                  >
-                                    <Trash2 className="h-4 w-4" />
-                                  </button>
+                                {canEdit && (
+                                  <div className="flex items-center space-x-1">
+                                    <button
+                                      onClick={() => {
+                                        setSelectedDay(null);
+                                        setEditingRecord(record);
+                                      }}
+                                      className="p-2 text-secondary hover:text-accent hover:bg-accent/10 rounded-lg transition-all"
+                                      title="Edit Record"
+                                    >
+                                      <Edit2 className="h-4 w-4" />
+                                    </button>
+                                    <button
+                                      onClick={() => handleDeleteRecord(record.id)}
+                                      className="p-2 text-secondary hover:text-danger hover:bg-danger/10 rounded-lg transition-all"
+                                      title="Delete Record"
+                                    >
+                                      <Trash2 className="h-4 w-4" />
+                                    </button>
+                                  </div>
                                 )}
                               </div>
                             </div>
@@ -1153,11 +2014,24 @@ export function MonthlyView() {
                               </div>
                               <div className="grid grid-cols-3 gap-3">
                                 <div className="p-3 rounded-xl bg-surface border border-border">
-                                  <p className="text-[8px] font-bold text-secondary uppercase tracking-widest mb-1">School</p>
-                                  <p className="text-xs font-bold text-primary font-mono">{formatCurrency((record.school_morning || 0) + (record.school_evening || 0))}</p>
+                                  <p className="text-[8px] font-bold text-secondary uppercase tracking-widest mb-2">School Route</p>
+                                  <div className="space-y-2">
+                                    <div className="flex flex-col">
+                                      <span className="text-[7px] text-secondary font-bold uppercase tracking-tighter">Morning</span>
+                                      <span className="text-[10px] font-bold text-primary leading-tight truncate" title={record.school_morning_name}>
+                                        {record.school_morning_name || 'N/A'}
+                                      </span>
+                                    </div>
+                                    <div className="flex flex-col">
+                                      <span className="text-[7px] text-secondary font-bold uppercase tracking-tighter">Evening</span>
+                                      <span className="text-[10px] font-bold text-primary leading-tight truncate" title={record.school_evening_name}>
+                                        {record.school_evening_name || 'N/A'}
+                                      </span>
+                                    </div>
+                                  </div>
                                 </div>
                                 <div className="p-3 rounded-xl bg-surface border border-border">
-                                  <p className="text-[8px] font-bold text-secondary uppercase tracking-widest mb-1">Charter</p>
+                                  <p className="text-[8px] font-bold text-secondary uppercase tracking-widest mb-1">Charter (AM/PM)</p>
                                   <p className="text-xs font-bold text-primary font-mono">{formatCurrency((record.charter_morning || 0) + (record.charter_evening || 0))}</p>
                                 </div>
                                 <div className="p-3 rounded-xl bg-surface border border-border">
@@ -1166,6 +2040,58 @@ export function MonthlyView() {
                                 </div>
                               </div>
                             </div>
+
+                            {record.has_edit_history && (
+                              <div className="space-y-3 pt-2">
+                                <button
+                                  onClick={() => {
+                                    const nextExpanded = !expandedHistory[record.id!];
+                                    setExpandedHistory(prev => ({ ...prev, [record.id!]: nextExpanded }));
+                                    if (nextExpanded) fetchFullHistory(record.id!);
+                                  }}
+                                  className="flex items-center space-x-2 text-[10px] font-bold text-amber-600 uppercase tracking-widest hover:text-amber-700 transition-colors"
+                                >
+                                  <History className="h-3 w-3" />
+                                  <span>{expandedHistory[record.id!] ? 'Hide Edit History' : 'View Edit History'}</span>
+                                </button>
+                                
+                                {expandedHistory[record.id!] && (
+                                  <div className="space-y-4 pl-4 border-l-2 border-amber-100 dark:border-amber-900/30">
+                                    {loadingHistory[record.id!] ? (
+                                      <div className="flex items-center space-x-2 text-[10px] text-secondary">
+                                        <div className="h-2 w-2 animate-spin rounded-full border border-secondary border-t-transparent" />
+                                        <span>Loading history...</span>
+                                      </div>
+                                    ) : fullHistory[record.id!]?.length > 0 ? (
+                                      fullHistory[record.id!].map((history) => (
+                                        <div key={history.id} className="space-y-1">
+                                          <div className="flex items-center justify-between">
+                                            <span className="text-[9px] font-bold text-primary">
+                                              {history.editedBy} ({history.editedByRole})
+                                            </span>
+                                            <span className="text-[8px] text-secondary">
+                                              {format(history.editedAt, 'dd MMM yyyy, HH:mm')}
+                                            </span>
+                                          </div>
+                                          <div className="space-y-0.5">
+                                            {history.changes.map((change: any, cIdx: number) => (
+                                              <div key={cIdx} className="text-[9px] text-secondary flex items-center space-x-1">
+                                                <span className="font-medium text-primary/70">{change.field}:</span>
+                                                <span className="line-through opacity-50">{String(change.oldValue ?? 'None')}</span>
+                                                <ArrowRight className="h-2 w-2" />
+                                                <span className="text-accent font-medium">{String(change.newValue ?? 'None')}</span>
+                                              </div>
+                                            ))}
+                                          </div>
+                                        </div>
+                                      ))
+                                    ) : (
+                                      <p className="text-[10px] text-secondary italic">No detailed history records found.</p>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                            )}
 
                             {record.booking_details && (
                               <div className="p-4 rounded-xl bg-accent/5 border border-accent/10">

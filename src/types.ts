@@ -21,6 +21,40 @@ export interface Bus {
   registration_number: string;
   model: string;
   capacity: number;
+  bus_type?: 'School Bus' | 'Coach' | 'Mini Bus' | 'Tempo';
+  ac_type?: 'AC' | 'Non-AC';
+  is_active: boolean;
+  purchase_date?: string;
+  insurance_expiry?: string;
+  fitness_expiry?: string;
+  permit_expiry?: string;
+  vehicle_tax_due?: string;
+  puc_expiry?: string;
+  cng_testing_due?: string;
+  speed_governor_expiry?: string;
+  fire_extinguisher_expiry?: string;
+  notes?: string;
+}
+
+export interface BusMaintenanceRecord {
+  id: string;
+  date: string;
+  type: 'Service' | 'Repair' | 'Tyre Change' | 'Oil Change' | 'Other';
+  description: string;
+  cost: number;
+  workshop?: string;
+  odometer?: number;
+  next_service_date?: string;
+  added_by: string;
+  created_at: any;
+}
+
+export interface BusComment {
+  id: string;
+  text: string;
+  created_by: string;
+  created_by_role: string;
+  created_at: any;
 }
 
 export interface Staff {
@@ -33,6 +67,13 @@ export interface Staff {
   join_date?: string;
   is_active: boolean;
   created_at: string;
+  phone?: string;
+  emergency_contact_name?: string;
+  emergency_contact_number?: string;
+  home_address?: string;
+  identity_type?: 'Aadhaar Card' | 'PAN Card' | 'Driving License' | 'Voter ID' | 'Passport';
+  identity_number?: string;
+  date_of_birth?: string;
 }
 
 export interface DailyRecord {
@@ -59,7 +100,10 @@ export interface DailyRecord {
   notes?: string;
   paid_by?: 'owner' | 'accountant';
   created_by: string;
-  created_at: string;
+  created_at: any;
+  has_edit_history?: boolean;
+  last_edited_by?: string;
+  last_edited_at?: string;
 }
 
 export interface School {
@@ -90,7 +134,7 @@ export interface BusExpense {
   receipt_ref?: string;
   paid_by?: 'owner' | 'accountant';
   created_by: string;
-  created_at: string;
+  created_at: any;
 }
 
 export interface CompanyExpense {
@@ -104,7 +148,7 @@ export interface CompanyExpense {
   receipt_ref?: string;
   paid_by?: 'owner' | 'accountant';
   created_by: string;
-  created_at: string;
+  created_at: any;
 }
 
 export interface CashTransaction {

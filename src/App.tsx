@@ -1,5 +1,6 @@
 import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { Toaster } from 'react-hot-toast';
 import { AuthProvider } from './contexts/AuthContext';
 import { ProtectedRoute } from './components/ProtectedRoute';
 import { Layout } from './components/Layout';
@@ -10,6 +11,7 @@ import { MonthlyView } from './pages/MonthlyView';
 import { Dashboard } from './pages/Dashboard';
 import { StaffManager } from './pages/StaffManager';
 import { BusManager } from './pages/BusManager';
+import BusProfile from './pages/BusProfile';
 import { DriverPortal } from './pages/DriverPortal';
 import { ExpenseEntry } from './pages/ExpenseEntry';
 import { SalaryManager } from './pages/SalaryManager';
@@ -46,6 +48,7 @@ export default function App() {
   return (
     <ErrorBoundary>
       <AuthProvider>
+        <Toaster position="top-right" reverseOrder={false} />
         <Router>
           <Routes>
             <Route path="/login" element={<Login />} />
@@ -159,6 +162,11 @@ export default function App() {
               <Route path="buses" element={
                 <ProtectedRoute allowedRoles={['admin', 'developer']}>
                   <BusManager />
+                </ProtectedRoute>
+              } />
+              <Route path="admin/buses/:busId" element={
+                <ProtectedRoute allowedRoles={['admin', 'developer']}>
+                  <BusProfile />
                 </ProtectedRoute>
               } />
               <Route path="settings" element={
