@@ -341,6 +341,7 @@ export interface Invoice {
   invoiceDate: any;
   dueDate: any;
   month: string;
+  monthDate?: any; // Start of month as Timestamp for accurate FIFO sorting
   feeAmount: number;
   profileConcession: number;
   invoiceConcession: number;
@@ -374,7 +375,15 @@ export interface Receipt {
   receivedBy: string;
   amountReceived: number;
   amountInWords: string;
-  linkedInvoices?: { invoiceId: string; invoiceNumber: string; amountApplied: number; month: string; status: string }[];
+  linkedInvoices?: { 
+    invoiceId: string; 
+    invoiceNumber: string; 
+    amountApplied: number; 
+    month: string; 
+    status: string;
+    totalAmount?: number;
+    balanceDue?: number;
+  }[];
   description?: string;
   notes?: string;
   createdAt: any;

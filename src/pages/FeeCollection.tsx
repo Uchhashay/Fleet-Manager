@@ -15,14 +15,20 @@ import {
   Filter,
   ChevronDown,
   Search,
-  FileText
+  FileText,
+  Trash2,
+  MessageCircle
 } from 'lucide-react';
 import { formatCurrency, cn } from '../lib/utils';
 import { FeeCollection, Student, Receipt, Invoice, Organization } from '../types';
 import { handleFirestoreError, OperationType } from '../lib/firebase-utils';
 import { logActivity } from '../lib/activity-logger';
 import { motion, AnimatePresence } from 'framer-motion';
-import { applyPaymentToInvoices } from '../lib/invoice-utils';
+import { 
+  applyPaymentToInvoices, 
+  revertPaymentFromInvoices,
+  reallocatePayment
+} from '../lib/invoice-utils';
 import { amountToWordsIndian } from '../lib/number-utils';
 import { generateReceiptPDF } from '../lib/pdf-service';
 
@@ -37,6 +43,7 @@ export function FeeCollectionPage() {
   const [loading, setLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingCollection, setEditingCollection] = useState<FeeCollection | null>(null);
+  const [entryToDelete, setEntryToDelete] = useState<FeeCollection | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedStudent, setSelectedStudent] = useState<Student | null>(null);
   const [formData, setFormData] = useState({
@@ -166,25 +173,84 @@ export function FeeCollectionPage() {
       // If a student is selected, update their balance and create/update a receipt
       if (selectedStudent) {
         if (editingCollection) {
-          // If amount changed or student changed, we need to adjust balance
-          // Note: Full invoice re-adjustment is complex, we just update student balance here
-          const oldAmount = editingCollection.amount || 0;
-          const diff = formData.amount - oldAmount;
-          
-          if (diff !== 0) {
-            batch.update(doc(db, 'students', selectedStudent.id), {
-              totalBalance: increment(-diff)
-            });
-            
-            // Add timeline for adjustment
-            const timelineRef = doc(collection(db, 'students', selectedStudent.id, 'timeline'));
-            batch.set(timelineRef, {
-              event: 'Fee Adjusted',
-              description: `Fee record from ${formData.date} updated. Amount changed from ₹${oldAmount} to ₹${formData.amount}. Difference of ₹${Math.abs(diff)} ${diff > 0 ? 'deducted from' : 'added back to'} balance.`,
-              createdBy: profile?.full_name || 'System',
-              createdAt: serverTimestamp()
-            });
+          // 1. Reallocate payment across invoices correctly (handles stale data internally)
+          let oldLinkedInvoices = [];
+          if (editingCollection.receipt_id) {
+            const oldReceiptSnap = await getDoc(doc(db, 'receipts', editingCollection.receipt_id));
+            if (oldReceiptSnap.exists()) {
+              const oldReceipt = oldReceiptSnap.data() as Receipt;
+              oldLinkedInvoices = oldReceipt.linkedInvoices || [];
+            }
           }
+
+          const linkedInvoices = await reallocatePayment(
+            batch, 
+            selectedStudent.id, 
+            oldLinkedInvoices, 
+            formData.amount
+          );
+          
+          // 3. Update student balance (revert old, apply new)
+          const oldAmount = editingCollection.amount || 0;
+          const oldStudentId = editingCollection.student_id;
+          
+          if (oldStudentId && oldStudentId !== selectedStudent.id) {
+            // Student changed: Revert old, apply new to different students
+            batch.update(doc(db, 'students', oldStudentId), {
+              totalBalance: increment(oldAmount)
+            });
+            batch.update(doc(db, 'students', selectedStudent.id), {
+              totalBalance: increment(-formData.amount)
+            });
+          } else {
+            // Same student: Just update the difference
+            const balanceDiff = formData.amount - oldAmount;
+            if (balanceDiff !== 0) {
+              batch.update(doc(db, 'students', selectedStudent.id), {
+                totalBalance: increment(-balanceDiff)
+              });
+            }
+          }
+
+          // 4. Update the receipt
+          const receiptRef = doc(db, 'receipts', receiptId!);
+          const monthsPaid = linkedInvoices.filter(li => li.invoiceId !== 'ADVANCE').map(li => li.month);
+          const uniqueMonths = [...new Set(monthsPaid)];
+          const hasAdvance = linkedInvoices.some(li => li.invoiceId === 'ADVANCE');
+          let description = uniqueMonths.length > 0 ? `Fees for ${uniqueMonths.join(', ')}` : 'Transport Fees';
+          if (hasAdvance) description += uniqueMonths.length > 0 ? ' (incl. Advance)' : 'Advance Payment';
+          if (formData.notes) description = formData.notes;
+
+          batch.set(receiptRef, {
+            receiptNumber: receiptNumberStr,
+            invoiceId: linkedInvoices[0]?.invoiceId || 'N/A',
+            invoiceNumber: linkedInvoices[0]?.invoiceNumber || 'N/A',
+            studentId: selectedStudent.id,
+            studentName: selectedStudent.studentName,
+            fatherName: selectedStudent.fatherName,
+            address: selectedStudent.address,
+            phoneNumber: selectedStudent.phoneNumber,
+            paymentDate: Timestamp.fromDate(new Date(formData.date)),
+            paymentMode: formData.payment_mode,
+            feeType: formData.fee_type,
+            receivedBy: formData.received_by || profile?.full_name || 'System',
+            amountReceived: formData.amount,
+            amountInWords: amountToWordsIndian(formData.amount),
+            linkedInvoices,
+            description,
+            notes: formData.notes,
+            updatedAt: serverTimestamp(),
+            createdAt: editingCollection.created_at || serverTimestamp()
+          });
+
+          // Timeline
+          const timelineRef = doc(collection(db, 'students', selectedStudent.id, 'timeline'));
+          batch.set(timelineRef, {
+            event: 'Fee Adjusted',
+            description: `Fee record updated. Amount: ₹${oldAmount} -> ₹${formData.amount}. Invoices recalculated.`,
+            createdBy: profile?.full_name || 'System',
+            createdAt: serverTimestamp()
+          });
         } else {
           // Apply payment to invoices using FIFO for NEW records
           const linkedInvoices = await applyPaymentToInvoices(batch, selectedStudent.id, formData.amount);
@@ -392,7 +458,7 @@ export function FeeCollectionPage() {
         }
       }
 
-      // 3. Fallback: Construct a virtual receipt object from the collection data
+      // 3. Fallback: Construct a virtual receipt object from the collection data (for legacy records)
       if (!receiptData) {
         const student = students.find(s => s.id === feeEntry.student_id) || 
                        students.find(s => s.studentName === feeEntry.student_name);
@@ -417,6 +483,26 @@ export function FeeCollectionPage() {
         } as Receipt;
       }
 
+      // 4. Find linked invoice for the PDF (reusing logic from InvoiceReceipt.tsx)
+      let inv: Invoice | undefined;
+      if (receiptData.invoiceId && receiptData.invoiceId !== 'N/A') {
+        const invSnap = await getDoc(doc(db, 'invoices', receiptData.invoiceId));
+        if (invSnap.exists()) {
+          inv = { id: invSnap.id, ...invSnap.data() } as Invoice;
+        }
+      }
+
+      if (!inv) {
+        // Same fallback used in Receipts tab
+        inv = {
+          invoiceNumber: receiptData.invoiceNumber || 'N/A',
+          invoiceDate: receiptData.paymentDate,
+          totalAmount: receiptData.amountReceived || 0,
+          paidAmount: receiptData.amountReceived || 0,
+          balanceDue: 0,
+        } as any;
+      }
+
       // Get organization info
       let orgData = org;
       if (!orgData) {
@@ -427,13 +513,19 @@ export function FeeCollectionPage() {
         }
       }
 
-      if (!orgData) {
-        alert('Organization profile not found. Please set it up in Settings.');
-        setLoading(false);
-        return;
-      }
+      const defaultOrg: Organization = {
+        name: 'Jagriti Tours & Travels',
+        address_line1: 'E-10, Gali No-6, Tomar Colony, Burari',
+        address_line2: 'Delhi',
+        zip_code: '110084',
+        phone: '9811387399',
+        website: 'www.jagrititoursandtravels.com',
+        email: 'jagrititours@gmail.com'
+      };
 
-      generateReceiptPDF(receiptData, undefined, orgData).save(`${receiptData.receiptNumber || 'receipt'}.pdf`);
+      const organization = orgData || defaultOrg;
+
+      generateReceiptPDF(receiptData, inv, organization).save(`${receiptData.receiptNumber || 'receipt'}.pdf`);
     } catch (error) {
       console.error('Error downloading receipt:', error);
       alert('Failed to generate receipt PDF.');
@@ -453,15 +545,88 @@ export function FeeCollectionPage() {
     const phone = student.phoneNumber.replace(/\D/g, '');
     const formattedPhone = phone.startsWith('91') ? phone : `91${phone}`;
     
-    const date = format(feeEntry.date instanceof Timestamp ? feeEntry.date.toDate() : new Date(feeEntry.date), 'dd/MM/yyyy');
-    const message = `Hello, this is a fee payment confirmation for ${feeEntry.student_name}. 
-Amount Received: ₹${feeEntry.amount}
-Date: ${date}
-Receipt No: ${feeEntry.receipt_number || feeEntry.receipt_no || 'N/A'}
-Thank you!`;
+    // Construct message to match InvoiceReceipt.tsx format
+    const desc = feeEntry.notes || feeEntry.fee_type || 'Transport Fees';
+    const message = `Dear ${student.fatherName}, Payment of ₹${feeEntry.amount} received for ${feeEntry.student_name} against ${desc}. Receipt No: [${feeEntry.receipt_number || feeEntry.receipt_no || 'N/A'}]. Thank you. - Jagriti Tours & Travels`;
 
     const encodedMessage = encodeURIComponent(message);
     window.open(`https://wa.me/${formattedPhone}?text=${encodedMessage}`, '_blank');
+  };
+
+  const handleDelete = (feeEntry: FeeCollection) => {
+    if (profile?.role !== 'admin' && profile?.role !== 'developer') {
+      alert('Only administrators can delete fee records.');
+      return;
+    }
+    setEntryToDelete(feeEntry);
+  };
+
+  const confirmDelete = async () => {
+    if (!entryToDelete) return;
+
+    setLoading(true);
+    try {
+      const batch = writeBatch(db);
+      
+      // 1. Revert from invoices
+      if (entryToDelete.receipt_id) {
+        const receiptSnap = await getDoc(doc(db, 'receipts', entryToDelete.receipt_id));
+        if (receiptSnap.exists()) {
+          const receipt = receiptSnap.data() as Receipt;
+          if (receipt.linkedInvoices && receipt.linkedInvoices.length > 0) {
+            await revertPaymentFromInvoices(batch, receipt.linkedInvoices);
+          }
+          // Delete receipt
+          batch.delete(doc(db, 'receipts', entryToDelete.receipt_id));
+        }
+      }
+
+      // 2. Revert student balance
+      if (entryToDelete.student_id) {
+        batch.update(doc(db, 'students', entryToDelete.student_id), {
+          totalBalance: increment(entryToDelete.amount)
+        });
+
+        // Timeline
+        const timelineRef = doc(collection(db, 'students', entryToDelete.student_id, 'timeline'));
+        batch.set(timelineRef, {
+          event: 'Fee Deleted',
+          description: `Fee record for ${formatCurrency(entryToDelete.amount)} was deleted. Balance reverted.`,
+          createdBy: profile?.full_name || 'System',
+          createdAt: serverTimestamp()
+        });
+      }
+
+      // 3. Delete cash transaction
+      const cashQ = query(
+        collection(db, 'cash_transactions'),
+        where('category', '==', 'fee_collection'),
+        where('linked_id', '==', entryToDelete.id)
+      );
+      const cashSnap = await getDocs(cashQ);
+      cashSnap.forEach(d => batch.delete(d.ref));
+
+      // 4. Delete fee record
+      batch.delete(doc(db, 'fee_collections', entryToDelete.id));
+
+      await batch.commit();
+      
+      if (profile) {
+        await logActivity(
+          profile.full_name,
+          profile.role,
+          'Deleted',
+          'Fee Collection',
+          `Deleted fee record of ${formatCurrency(entryToDelete.amount)} for ${entryToDelete.student_name}`
+        );
+      }
+      setEntryToDelete(null);
+    } catch (error) {
+      console.error('Error deleting fee record:', error);
+      alert('Failed to delete fee record.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   const filteredCollections = collections.filter(c => 
@@ -689,13 +854,18 @@ Thank you!`;
                     <td className="text-right">
                       <div className="flex justify-end gap-1">
                         <button
+                          onClick={() => handleDelete(c)}
+                          title="Delete Record"
+                          className="p-2 text-secondary hover:text-danger transition-colors"
+                        >
+                          <Trash2 className="h-4 w-4 stroke-[1.5px]" />
+                        </button>
+                        <button
                           onClick={() => handleWhatsApp(c)}
                           title="Share on WhatsApp"
                           className="p-2 text-secondary hover:text-success transition-colors"
                         >
-                          <svg className="h-4 w-4 fill-current" viewBox="0 0 24 24">
-                            <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.067 2.877 1.215 3.076.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z" />
-                          </svg>
+                          <MessageCircle className="h-4 w-4" />
                         </button>
                         <button
                           onClick={() => handleDownloadReceipt(c)}
@@ -993,6 +1163,49 @@ Thank you!`;
                   </button>
                 </div>
               </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Delete Confirmation Modal */}
+      <AnimatePresence>
+        {entryToDelete && (
+          <div className="fixed inset-0 z-[120] flex items-center justify-center p-4 bg-background/80 backdrop-blur-sm">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-surface max-w-md w-full rounded-3xl shadow-2xl border border-border p-8"
+            >
+              <div className="flex flex-col items-center text-center space-y-4">
+                <div className="h-16 w-16 rounded-2xl bg-danger/10 flex items-center justify-center text-danger">
+                  <Trash2 className="h-8 w-8" />
+                </div>
+                <div>
+                  <h3 className="text-xl font-black text-primary tracking-tight">Are you sure?</h3>
+                  <p className="text-sm text-secondary mt-2">
+                    This will delete the fee record for <span className="font-bold text-primary">{entryToDelete.student_name}</span>. 
+                    Linked invoices will be recalculated and the student's balance will be reverted.
+                  </p>
+                </div>
+                <div className="flex w-full gap-3 pt-4">
+                  <button
+                    onClick={() => setEntryToDelete(null)}
+                    disabled={loading}
+                    className="btn-secondary flex-1 !py-3"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={confirmDelete}
+                    disabled={loading}
+                    className="btn-danger flex-1 !py-3 shadow-lg shadow-danger/20"
+                  >
+                    {loading ? 'Deleting...' : 'Yes, Delete'}
+                  </button>
+                </div>
+              </div>
             </motion.div>
           </div>
         )}

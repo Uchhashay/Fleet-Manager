@@ -388,7 +388,7 @@ export const generateReceiptPDF = (receipt: Receipt, invoice: Invoice | undefine
   doc.text(`Payment Mode: ${receipt.paymentMode || 'N/A'}`, 15, 75);
 
   // Amount Box
-  doc.setFillColor(124, 58, 237);
+  doc.setFillColor(22, 163, 74);
   doc.rect(pageWidth - 65, 60, 50, 20, 'F');
   doc.setTextColor(255, 255, 255);
   doc.setFontSize(8);
@@ -421,14 +421,21 @@ export const generateReceiptPDF = (receipt: Receipt, invoice: Invoice | undefine
   if (receipt.linkedInvoices && receipt.linkedInvoices.length > 0) {
     autoTable(doc, {
       startY: 145,
-      head: [['Invoice Number', 'Month', 'Amount Applied', 'Status']],
+      head: [['Invoice Number', 'Month', 'Total Amnt', 'Applied', 'Balance', 'Status']],
       body: receipt.linkedInvoices.map(li => [
         li.invoiceNumber,
         li.month,
+        formatPDFCurrency(li.totalAmount || 0),
         formatPDFCurrency(li.amountApplied),
+        formatPDFCurrency(Math.max(0, li.balanceDue || 0)),
         li.status || 'PAID'
       ]),
-      headStyles: { fillColor: [243, 244, 246], textColor: [0, 0, 0] }
+      headStyles: { fillColor: [243, 244, 246], textColor: [0, 0, 0] },
+      columnStyles: {
+        2: { halign: 'right' },
+        3: { halign: 'right' },
+        4: { halign: 'right' }
+      }
     });
   } else if (invoice) {
     const invDate = invoice.invoiceDate?.toDate ? format(invoice.invoiceDate.toDate(), 'dd MMM yyyy') : 'N/A';

@@ -899,6 +899,7 @@ function RaiseInvoicesModal({ isOpen, onClose, students, profile }: { isOpen: bo
           invoiceDate,
           dueDate: finalDueDate,
           month: selectedMonth,
+          monthDate: Timestamp.fromDate(parse(selectedMonth, 'MMMM yyyy', new Date())),
           feeAmount: currentFeeAmount,
           profileConcession: student.concession,
           invoiceConcession: currentConcession - student.concession,

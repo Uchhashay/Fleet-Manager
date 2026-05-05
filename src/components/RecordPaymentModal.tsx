@@ -19,7 +19,7 @@ import { format } from 'date-fns';
 import { handleFirestoreError, OperationType } from '../lib/firebase-utils';
 import { formatCurrency } from '../lib/utils';
 import { amountToWordsIndian } from '../lib/number-utils';
-import { X, CreditCard, CheckCircle2 } from 'lucide-react';
+import { X, CreditCard, CheckCircle2, Info } from 'lucide-react';
 import { motion } from 'framer-motion';
 
 interface RecordPaymentModalProps {
@@ -59,79 +59,10 @@ export function RecordPaymentModal({ isOpen, onClose, invoice, profile }: Record
 
       const rcpRef = doc(collection(db, 'receipts'));
       
-      // FIFO Adjustment Logic
-      // First, apply to the current invoice
-      const amountToApplyToCurrent = Math.min(amount, invoice.balanceDue);
-      const newPaidAmount = invoice.paidAmount + amountToApplyToCurrent;
-      const newBalanceDue = invoice.totalAmount - newPaidAmount;
-      const newStatus = newBalanceDue <= 0 ? 'PAID' : 'PARTIAL';
-      
-      batch.update(doc(db, 'invoices', invoice.id), {
-        paidAmount: newPaidAmount,
-        balanceDue: Math.max(0, newBalanceDue),
-        status: newStatus,
-        updatedAt: serverTimestamp()
-      });
-
-      const linkedInvoices = [{
-        invoiceId: invoice.id,
-        invoiceNumber: invoice.invoiceNumber,
-        amountApplied: amountToApplyToCurrent,
-        month: invoice.month,
-        status: newStatus
-      }];
-
-      // If there's remaining payment, apply to other invoices
-      const remainingAmount = amount - amountToApplyToCurrent;
-      if (remainingAmount > 0) {
-        const otherInvoicesRef = collection(db, 'invoices');
-        const otherQ = query(
-          otherInvoicesRef,
-          where('studentId', '==', invoice.studentId),
-          where('status', 'in', ['UNPAID', 'PARTIAL']),
-          orderBy('invoiceDate', 'asc')
-        );
-        const otherSnap = await getDocs(otherQ);
-        const otherPending = otherSnap.docs
-          .map(d => ({ id: d.id, ...d.data() } as Invoice))
-          .filter(inv => inv.id !== invoice.id);
-
-        let spillover = remainingAmount;
-        for (const otherInv of otherPending) {
-          if (spillover <= 0) break;
-          const toApply = Math.min(spillover, otherInv.balanceDue);
-          const oPaid = otherInv.paidAmount + toApply;
-          const oBal = otherInv.totalAmount - oPaid;
-          const oStatus = oBal <= 0 ? 'PAID' : 'PARTIAL';
-
-          batch.update(doc(db, 'invoices', otherInv.id), {
-            paidAmount: oPaid,
-            balanceDue: Math.max(0, oBal),
-            status: oStatus,
-            updatedAt: serverTimestamp()
-          });
-
-          linkedInvoices.push({
-            invoiceId: otherInv.id,
-            invoiceNumber: otherInv.invoiceNumber,
-            amountApplied: toApply,
-            month: otherInv.month,
-            status: oStatus
-          });
-          spillover -= toApply;
-        }
-
-        // If there's still spillover after all invoices, it's an advance
-        if (spillover > 0) {
-          linkedInvoices.push({
-            invoiceId: 'ADVANCE',
-            invoiceNumber: 'ADVANCE',
-            amountApplied: spillover,
-            month: 'Future Adjustments',
-            status: 'ADVANCE'
-          });
-        }
-      }
+      // Use Unified FIFO Adjustment Logic from invoice-utils
+      // We first apply to ANY pending invoices including the current one
+      // Note: applyPaymentToInvoices already filters for UNPAID/PARTIAL
+      const linkedInvoices = await applyPaymentToInvoices(batch, invoice.studentId, amount);
 
       // Generate description from months
       const monthsPaid = linkedInvoices
@@ -145,15 +76,15 @@ export function RecordPaymentModal({ isOpen, onClose, invoice, profile }: Record
         : `Fees for ${invoice.month}`;
         
       if (hasAdvance) {
-        description += ' (incl. Advance)';
+        description += uniqueMonths.length > 0 ? ' (incl. Advance)' : 'Advance Payment';
       }
       
       if (notes) description = notes;
 
       const receiptData = {
         receiptNumber,
-        invoiceId: invoice.id,
-        invoiceNumber: invoice.invoiceNumber,
+        invoiceId: linkedInvoices[0]?.invoiceId || invoice.id,
+        invoiceNumber: linkedInvoices[0]?.invoiceNumber || invoice.invoiceNumber,
         studentId: invoice.studentId,
         studentName: invoice.studentName,
         fatherName: invoice.fatherName,
@@ -180,7 +111,7 @@ export function RecordPaymentModal({ isOpen, onClose, invoice, profile }: Record
 
       // Add timeline
       const timelineRef = doc(collection(db, 'students', invoice.studentId, 'timeline'));
-      const invoiceInfo = linkedInvoices.length > 1 
+      const invoiceInfo = linkedInvoices.length > 0
         ? `Adjusted against: ${linkedInvoices.map(li => li.invoiceNumber).join(', ')}`
         : `Adjusted against invoice: ${invoice.invoiceNumber}`;
 
@@ -246,7 +177,12 @@ export function RecordPaymentModal({ isOpen, onClose, invoice, profile }: Record
           <div className="bg-accent/5 p-4 rounded-2xl border border-accent/10 space-y-1">
             <p className="text-[10px] font-bold text-secondary uppercase tracking-widest">Student Name</p>
             <p className="text-lg font-black text-primary">{invoice.studentName}</p>
-            <p className="text-xs text-secondary">Outstanding for {invoice.month}: <span className="font-bold text-danger">{formatCurrency(invoice.balanceDue)}</span></p>
+            <div className="flex flex-col space-y-1">
+              <p className="text-xs text-secondary">Outstanding for {invoice.month}: <span className="font-bold text-danger">{formatCurrency(invoice.balanceDue)}</span></p>
+              <p className="text-[10px] text-accent font-bold italic bg-accent/5 px-2 py-1 rounded-lg border border-accent/10">
+                ℹ️ FIFO: Payment will be applied to the oldest pending invoices first.
+              </p>
+            </div>
           </div>
 
           <div className="grid grid-cols-2 gap-4">
@@ -255,7 +191,6 @@ export function RecordPaymentModal({ isOpen, onClose, invoice, profile }: Record
               <input
                 required
                 type="number"
-                max={invoice.balanceDue}
                 value={amount}
                 onChange={(e) => setAmount(Number(e.target.value))}
                 className="input w-full bg-background font-mono"

@@ -15,7 +15,7 @@ import {
   where
 } from 'firebase/firestore';
 import { Student } from '../types';
-import { format, endOfMonth } from 'date-fns';
+import { format, endOfMonth, parse } from 'date-fns';
 import { handleFirestoreError, OperationType } from '../lib/firebase-utils';
 import { formatCurrency } from '../lib/utils';
 import { X, Save, FileText, Info, AlertCircle, CheckCircle2 } from 'lucide-react';
@@ -95,6 +95,7 @@ export function RaiseSingleInvoiceModal({ isOpen, onClose, student, profile }: R
         invoiceDate,
         dueDate,
         month: selectedMonth,
+        monthDate: Timestamp.fromDate(parse(selectedMonth, 'MMMM yyyy', new Date())),
         feeAmount,
         profileConcession: student.concession,
         invoiceConcession: concession - student.concession,
