@@ -39,6 +39,8 @@ interface LedgerEntry {
   staff_id?: string;
   linked_id?: string;
   running_balance?: number;
+  created_by?: string;
+  recorded_by?: string;
   created_at?: any;
 }
 
@@ -139,6 +141,7 @@ export function Cashbook() {
             description: `Bus ${data.bus_id} collections`,
             source: 'Daily Entry',
             paid_by: paidBy,
+            created_by: data.created_by,
             created_at: createdAt
           });
         }
@@ -152,6 +155,7 @@ export function Cashbook() {
             description: `Fuel & Duty for Bus ${data.bus_id}`,
             source: 'Daily Entry',
             paid_by: paidBy,
+            created_by: data.created_by,
             created_at: createdAt
           });
         }
@@ -177,6 +181,7 @@ export function Cashbook() {
             description: data.description || `Bus ${data.bus_id} expense`,
             source: 'Bus Expense' as const,
             paid_by: paidBy,
+            created_by: data.created_by,
             created_at: data.created_at
           };
         })
@@ -202,6 +207,7 @@ export function Cashbook() {
             description: data.description || 'Company expense',
             source: 'Company Expense' as const,
             paid_by: paidBy,
+            created_by: data.created_by,
             created_at: data.created_at
           };
         })
@@ -228,6 +234,7 @@ export function Cashbook() {
             description: `${data.student_name} - ${data.school_name}`,
             source: 'Fee Collection' as const,
             paid_by: paidBy,
+            recorded_by: data.recorded_by,
             created_at: data.created_at
           };
         })
@@ -337,23 +344,8 @@ export function Cashbook() {
 
       setEntries(allEntries);
 
-      // Calculate Total Cash in Hand (Cumulative - matches Dashboard)
-      let allCashQ = query(collection(db, 'cash_transactions'));
-      if (profile?.role === 'accountant') {
-        allCashQ = query(allCashQ, where('created_by', '==', profile.id));
-      }
-      const allCashSnap = await getDocs(allCashQ);
-      let balance = globalOpening;
-      allCashSnap.docs.forEach(doc => {
-        const data = doc.data();
-        const paidBy = data.paid_by || 'accountant';
-        if (paidBy === viewMode) {
-          const amount = Number(data.amount) || 0;
-          if (data.type === 'in') balance += amount;
-          else balance -= amount;
-        }
-      });
-      setTotalCashInHand(balance);
+      // Summing logic (matches Dashboard)
+      setTotalCashInHand(runningBalance);
     } catch (error) {
       console.error('Error fetching ledger:', error);
     } finally {

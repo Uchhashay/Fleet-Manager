@@ -284,34 +284,6 @@ export function FeeCollectionPage() {
             createdAt: editingCollection.created_at || serverTimestamp()
           });
 
-          // Update/Create Cash Transaction if Cash
-          if (formData.payment_mode === 'Cash') {
-            const cashQ = query(
-              collection(db, 'cash_transactions'),
-              where('linked_id', '==', editingCollection.id)
-            );
-            const cashSnap = await getDocs(cashQ);
-            
-            const cashData = {
-              date: formData.date,
-              type: 'in' as const,
-              category: 'fee_collection' as const,
-              amount: formData.amount,
-              description: `Fee Collection: ${selectedStudent.studentName} (${formData.fee_type})`,
-              linked_id: editingCollection.id,
-              paid_by: profile?.role === 'admin' || profile?.role === 'developer' ? 'owner' : 'accountant',
-              created_by: auth.currentUser?.uid,
-              created_at: serverTimestamp()
-            };
-
-            if (!cashSnap.empty) {
-              batch.update(doc(db, 'cash_transactions', cashSnap.docs[0].id), cashData);
-            } else {
-              const newCashRef = doc(collection(db, 'cash_transactions'));
-              batch.set(newCashRef, cashData);
-            }
-          }
-
           // Timeline
           const timelineRef = doc(collection(db, 'students', selectedStudent.id, 'timeline'));
           batch.set(timelineRef, {
@@ -328,21 +300,6 @@ export function FeeCollectionPage() {
           batch.update(doc(db, 'students', selectedStudent.id), {
             totalBalance: increment(-formData.amount)
           });
-
-          if (formData.payment_mode === 'Cash') {
-            const cashRef = doc(collection(db, 'cash_transactions'));
-            batch.set(cashRef, {
-              date: formData.date,
-              type: 'in',
-              category: 'fee_collection',
-              amount: formData.amount,
-              description: `Fee Collection: ${selectedStudent.studentName} (${formData.fee_type})`,
-              linked_id: feeRef.id,
-              paid_by: profile?.role === 'admin' || profile?.role === 'developer' ? 'owner' : 'accountant',
-              created_by: auth.currentUser?.uid,
-              created_at: serverTimestamp()
-            });
-          }
 
           // Add timeline
           const timelineRef = doc(collection(db, 'students', selectedStudent.id, 'timeline'));
