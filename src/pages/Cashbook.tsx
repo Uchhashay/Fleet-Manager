@@ -70,10 +70,11 @@ export function Cashbook() {
 
   useEffect(() => {
     if (profile?.role) {
-      setViewMode((profile.role === 'admin' || profile.role === 'developer') ? 'owner' : 'accountant');
+      const defaultView = (profile.role === 'admin' || profile.role === 'developer') ? 'owner' : 'accountant';
+      setViewMode(defaultView);
       setFormData(prev => ({
         ...prev,
-        paid_by: (profile.role === 'admin' || profile.role === 'developer') ? 'owner' : 'accountant'
+        paid_by: defaultView
       }));
     }
   }, [profile?.role]);
@@ -238,6 +239,12 @@ export function Cashbook() {
         where('date', '>=', startDate),
         where('date', '<=', endDate)
       );
+
+      // Apply role-based filtering for accountants
+      if (profile?.role === 'accountant') {
+        cashQuery = query(cashQuery, where('created_by', '==', profile.id));
+      }
+
       const cashSnap = await getDocs(cashQuery);
       const manualEntries: LedgerEntry[] = cashSnap.docs
         .map(doc => {
@@ -257,14 +264,24 @@ export function Cashbook() {
             created_at: data.created_at
           } as LedgerEntry;
         })
-        .filter(e => e.paid_by === viewMode && !e.linked_id);
+        .filter(e => {
+          const matchesView = e.paid_by === viewMode;
+          // If accountant view, also ensure we only see our own if we are an accountant
+          if (profile?.role === 'accountant') {
+             return matchesView; // already filtered by query
+          }
+          return matchesView && !e.linked_id;
+        });
 
       // Calculate Running Balance
       // 1. Get starting balance before startDate
-      const beforeQuery = query(
+      let beforeQuery = query(
         collection(db, 'cash_transactions'),
         where('date', '<', startDate)
       );
+      if (profile?.role === 'accountant') {
+        beforeQuery = query(beforeQuery, where('created_by', '==', profile.id));
+      }
       const beforeSnap = await getDocs(beforeQuery);
       
       // Get global opening balance from settings
@@ -283,15 +300,24 @@ export function Cashbook() {
       setOpeningBalance(runningBalance);
 
       // 2. Combine and sort ascending to calculate running balance
-      const allEntries = [...dailyEntries, ...busEntries, ...compEntries, ...feeEntries, ...manualEntries].sort((a, b) => {
-        const dateCompare = a.date.localeCompare(b.date);
-        if (dateCompare !== 0) return dateCompare;
-        
-        // If same date, use created_at
-        const aTime = a.created_at instanceof Timestamp ? a.created_at.toMillis() : 0;
-        const bTime = b.created_at instanceof Timestamp ? b.created_at.toMillis() : 0;
-        return aTime - bTime;
-      });
+      const allEntries = [...dailyEntries, ...busEntries, ...compEntries, ...feeEntries, ...manualEntries]
+        .filter(e => {
+          // Extra safety for other collections if accountant
+          if (profile?.role === 'accountant') {
+            const data = e as any;
+            return (data.created_by === profile.id || data.recorded_by === profile.id);
+          }
+          return true;
+        })
+        .sort((a, b) => {
+          const dateCompare = a.date.localeCompare(b.date);
+          if (dateCompare !== 0) return dateCompare;
+          
+          // If same date, use created_at
+          const aTime = a.created_at instanceof Timestamp ? a.created_at.toMillis() : 0;
+          const bTime = b.created_at instanceof Timestamp ? b.created_at.toMillis() : 0;
+          return aTime - bTime;
+        });
 
       allEntries.forEach(entry => {
         if (entry.type === 'Inflow') runningBalance += entry.amount;
@@ -312,7 +338,11 @@ export function Cashbook() {
       setEntries(allEntries);
 
       // Calculate Total Cash in Hand (Cumulative - matches Dashboard)
-      const allCashSnap = await getDocs(collection(db, 'cash_transactions'));
+      let allCashQ = query(collection(db, 'cash_transactions'));
+      if (profile?.role === 'accountant') {
+        allCashQ = query(allCashQ, where('created_by', '==', profile.id));
+      }
+      const allCashSnap = await getDocs(allCashQ);
       let balance = globalOpening;
       allCashSnap.docs.forEach(doc => {
         const data = doc.data();
@@ -468,30 +498,32 @@ export function Cashbook() {
           <h1 className="text-3xl font-bold tracking-tight text-primary">Cashbook</h1>
         </div>
         <div className="flex items-center space-x-3">
-          <div className="flex bg-surface p-1.5 rounded-xl border border-border shadow-inner mr-2">
-            <button
-              onClick={() => setViewMode('accountant')}
-              className={cn(
-                "px-6 py-2 text-[11px] font-bold uppercase tracking-widest rounded-lg transition-all duration-300",
-                viewMode === 'accountant' 
-                  ? "bg-primary text-background shadow-lg scale-105" 
-                  : "text-secondary hover:text-primary hover:bg-primary/5"
-              )}
-            >
-              Accountant
-            </button>
-            <button
-              onClick={() => setViewMode('owner')}
-              className={cn(
-                "px-6 py-2 text-[11px] font-bold uppercase tracking-widest rounded-lg transition-all duration-300",
-                viewMode === 'owner' 
-                  ? "bg-primary text-background shadow-lg scale-105" 
-                  : "text-secondary hover:text-primary hover:bg-primary/5"
-              )}
-            >
-              Owner
-            </button>
-          </div>
+          {(profile?.role === 'admin' || profile?.role === 'developer') && (
+            <div className="flex bg-surface p-1.5 rounded-xl border border-border shadow-inner mr-2">
+              <button
+                onClick={() => setViewMode('accountant')}
+                className={cn(
+                  "px-6 py-2 text-[11px] font-bold uppercase tracking-widest rounded-lg transition-all duration-300",
+                  viewMode === 'accountant' 
+                    ? "bg-primary text-background shadow-lg scale-105" 
+                    : "text-secondary hover:text-primary hover:bg-primary/5"
+                )}
+              >
+                Accountant
+              </button>
+              <button
+                onClick={() => setViewMode('owner')}
+                className={cn(
+                  "px-6 py-2 text-[11px] font-bold uppercase tracking-widest rounded-lg transition-all duration-300",
+                  viewMode === 'owner' 
+                    ? "bg-primary text-background shadow-lg scale-105" 
+                    : "text-secondary hover:text-primary hover:bg-primary/5"
+                )}
+              >
+                Owner
+              </button>
+            </div>
+          )}
           
           <button
             onClick={exportToCSV}

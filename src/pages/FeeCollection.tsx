@@ -20,7 +20,7 @@ import {
   MessageCircle
 } from 'lucide-react';
 import { formatCurrency, cn } from '../lib/utils';
-import { FeeCollection, Student, Receipt, Invoice, Organization } from '../types';
+import { FeeCollection, Student, Receipt, Invoice, Organization, Profile } from '../types';
 import { handleFirestoreError, OperationType } from '../lib/firebase-utils';
 import { logActivity } from '../lib/activity-logger';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -39,6 +39,7 @@ export function FeeCollectionPage() {
   const [collections, setCollections] = useState<FeeCollection[]>([]);
   const [listSearchQuery, setListSearchQuery] = useState('');
   const [students, setStudents] = useState<Student[]>([]);
+  const [accountants, setAccountants] = useState<Profile[]>([]);
   const [org, setOrg] = useState<Organization | null>(null);
   const [loading, setLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -84,8 +85,31 @@ export function FeeCollectionPage() {
     dateFrom: format(startOfMonth(new Date()), 'yyyy-MM-dd'),
     dateTo: format(endOfMonth(new Date()), 'yyyy-MM-dd'),
     school: 'all',
-    mode: 'all'
+    mode: 'all',
+    receivedBy: 'all',
+    collector: 'all'
   });
+
+  useEffect(() => {
+    if (profile?.role === 'accountant') {
+      setFilters(prev => ({ ...prev, receivedBy: profile.id }));
+    } else {
+      setFilters(prev => ({ ...prev, receivedBy: 'all' }));
+    }
+  }, [profile?.id, profile?.role]);
+
+  useEffect(() => {
+    const fetchAccountants = async () => {
+      try {
+        const q = query(collection(db, 'profiles'), where('role', 'in', ['accountant', 'admin', 'developer']));
+        const snap = await getDocs(q);
+        setAccountants(snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Profile)));
+      } catch (error) {
+        console.error('Error fetching accountants:', error);
+      }
+    };
+    fetchAccountants();
+  }, []);
 
   const feeTypes = ["Sunday Fee Collection", "Regular Fee", "Annual Fee", "Other"];
   const paymentModes = ["Cash", "Online", "Cheque"];
@@ -104,6 +128,10 @@ export function FeeCollectionPage() {
       orderBy('date', 'desc')
     );
 
+    if (profile?.role === 'accountant') {
+      q = query(q, where('createdBy.userId', '==', profile.id));
+    }
+
     const unsubscribe = onSnapshot(q, (snap) => {
       let list = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as FeeCollection));
 
@@ -112,6 +140,14 @@ export function FeeCollectionPage() {
       }
       if (filters.mode !== 'all') {
         list = list.filter(c => c.payment_mode === filters.mode);
+      }
+      if (filters.collector !== 'all') {
+        list = list.filter(c => c.received_by === filters.collector);
+      }
+      if (filters.receivedBy === 'owner') {
+        list = list.filter(c => c.createdBy?.role === 'owner');
+      } else if (filters.receivedBy !== 'all' && filters.receivedBy !== 'owner') {
+        list = list.filter(c => c.createdBy?.userId === filters.receivedBy);
       }
 
       setCollections(list);
@@ -160,6 +196,11 @@ export function FeeCollectionPage() {
         date: Timestamp.fromDate(new Date(formData.date)),
         data_entry_by: auth.currentUser?.email?.split('@')[0] || 'Unknown',
         recorded_by: auth.currentUser?.uid,
+        createdBy: {
+          userId: profile?.id || auth.currentUser?.uid || 'unknown',
+          name: profile?.full_name || 'Unknown',
+          role: profile?.role === 'admin' || profile?.role === 'developer' ? 'owner' : 'accountant'
+        },
         updated_at: serverTimestamp(),
         ...(editingCollection ? {} : { created_at: serverTimestamp() })
       };
@@ -243,6 +284,34 @@ export function FeeCollectionPage() {
             createdAt: editingCollection.created_at || serverTimestamp()
           });
 
+          // Update/Create Cash Transaction if Cash
+          if (formData.payment_mode === 'Cash') {
+            const cashQ = query(
+              collection(db, 'cash_transactions'),
+              where('linked_id', '==', editingCollection.id)
+            );
+            const cashSnap = await getDocs(cashQ);
+            
+            const cashData = {
+              date: formData.date,
+              type: 'in' as const,
+              category: 'fee_collection' as const,
+              amount: formData.amount,
+              description: `Fee Collection: ${selectedStudent.studentName} (${formData.fee_type})`,
+              linked_id: editingCollection.id,
+              paid_by: profile?.role === 'admin' || profile?.role === 'developer' ? 'owner' : 'accountant',
+              created_by: auth.currentUser?.uid,
+              created_at: serverTimestamp()
+            };
+
+            if (!cashSnap.empty) {
+              batch.update(doc(db, 'cash_transactions', cashSnap.docs[0].id), cashData);
+            } else {
+              const newCashRef = doc(collection(db, 'cash_transactions'));
+              batch.set(newCashRef, cashData);
+            }
+          }
+
           // Timeline
           const timelineRef = doc(collection(db, 'students', selectedStudent.id, 'timeline'));
           batch.set(timelineRef, {
@@ -259,6 +328,21 @@ export function FeeCollectionPage() {
           batch.update(doc(db, 'students', selectedStudent.id), {
             totalBalance: increment(-formData.amount)
           });
+
+          if (formData.payment_mode === 'Cash') {
+            const cashRef = doc(collection(db, 'cash_transactions'));
+            batch.set(cashRef, {
+              date: formData.date,
+              type: 'in',
+              category: 'fee_collection',
+              amount: formData.amount,
+              description: `Fee Collection: ${selectedStudent.studentName} (${formData.fee_type})`,
+              linked_id: feeRef.id,
+              paid_by: profile?.role === 'admin' || profile?.role === 'developer' ? 'owner' : 'accountant',
+              created_by: auth.currentUser?.uid,
+              created_at: serverTimestamp()
+            });
+          }
 
           // Add timeline
           const timelineRef = doc(collection(db, 'students', selectedStudent.id, 'timeline'));
@@ -729,7 +813,7 @@ export function FeeCollectionPage() {
           <Filter className="h-3 w-3 stroke-[1.5px]" />
           <span className="text-[10px] font-bold uppercase tracking-widest">Filter Records</span>
         </div>
-        <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-6">
+        <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
           <div className="space-y-2 lg:col-span-2">
             <label className="label">Search Student</label>
             <div className="relative">
@@ -787,6 +871,32 @@ export function FeeCollectionPage() {
             >
               <option value="all">All Modes</option>
               {paymentModes.map(m => <option key={m} value={m}>{m}</option>)}
+            </select>
+          </div>
+          <div className="space-y-2">
+            <label className="label">Received By</label>
+            <select
+              value={filters.receivedBy}
+              onChange={(e) => setFilters({ ...filters, receivedBy: e.target.value })}
+              className="input"
+              disabled={profile?.role === 'accountant'}
+            >
+              <option value="all">All</option>
+              <option value="owner">Owner</option>
+              {accountants.filter(acc => acc.role === 'accountant').map(acc => (
+                <option key={acc.id} value={acc.id}>{acc.full_name}</option>
+              ))}
+            </select>
+          </div>
+          <div className="space-y-2">
+            <label className="label">Collector</label>
+            <select
+              value={filters.collector}
+              onChange={(e) => setFilters({ ...filters, collector: e.target.value })}
+              className="input"
+            >
+              <option value="all">All Collectors</option>
+              {collectors.map(c => <option key={c} value={c}>{c}</option>)}
             </select>
           </div>
           <div className="flex items-end">

@@ -211,6 +211,11 @@ export interface FeeCollection {
   notes?: string;
   paid_by?: 'owner' | 'accountant';
   recorded_by: string;
+  createdBy?: {
+    userId: string;
+    name: string;
+    role: 'accountant' | 'owner';
+  };
   created_at: any;
 }
 
