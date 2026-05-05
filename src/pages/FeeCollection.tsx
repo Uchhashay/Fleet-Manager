@@ -382,22 +382,31 @@ export function FeeCollectionPage() {
           type: 'in',
           category: 'fee_collection',
           amount: formData.amount,
-          description: `Fee collection for ${formData.school_name}: ${formData.student_name}`,
+          description: `Fee Collection: ${formData.student_name} (${formData.fee_type}) - ${formData.school_name}`,
           linked_id: feeRef.id,
           paid_by: formData.paid_by,
           created_by: auth.currentUser?.uid,
-          updated_at: serverTimestamp()
+          updated_at: serverTimestamp(),
+          source: 'fee_collection'
         };
 
         if (cashSnap.empty) {
           const cashRef = doc(collection(db, 'cash_transactions'));
           batch.set(cashRef, { ...cashData, created_at: serverTimestamp() });
         } else {
-          batch.update(doc(db, 'cash_transactions', cashSnap.docs[0].id), cashData);
+          // Identify and update/consolidate duplicate cash transactions if any
+          cashSnap.docs.forEach((docSnap, index) => {
+            if (index === 0) {
+              batch.update(docSnap.ref, cashData);
+            } else {
+              // Delete any accidentally created duplicates
+              batch.delete(docSnap.ref);
+            }
+          });
         }
       } else if (!cashSnap.empty) {
-        // If it was cash before but now it's online/cheque, delete cash record
-        batch.delete(doc(db, 'cash_transactions', cashSnap.docs[0].id));
+        // If it was cash before but now it's online/cheque, delete all linked cash records
+        cashSnap.docs.forEach(docSnap => batch.delete(docSnap.ref));
       }
 
       await batch.commit();

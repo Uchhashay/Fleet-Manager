@@ -51,9 +51,11 @@ export function Cashbook() {
   const [totalCashInHand, setTotalCashInHand] = useState(0);
   const [openingBalance, setOpeningBalance] = useState(0);
   const [staff, setStaff] = useState<Staff[]>([]);
+  const [accountants, setAccountants] = useState<Staff[]>([]);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
   const [viewMode, setViewMode] = useState<'accountant' | 'owner'>((profile?.role === 'admin' || profile?.role === 'developer') ? 'owner' : 'accountant');
+  const [selectedAccountantId, setSelectedAccountantId] = useState<string>(auth.currentUser?.uid || '');
   const [activeForm, setActiveForm] = useState<'in' | 'out' | null>(null);
   const [filters, setFilters] = useState({
     startDate: format(startOfMonth(new Date()), 'yyyy-MM-dd'),
@@ -84,7 +86,7 @@ export function Cashbook() {
   useEffect(() => {
     fetchLedger();
     fetchStaff();
-  }, [filters, viewMode]);
+  }, [filters, viewMode, selectedAccountantId]);
 
   useEffect(() => {
     const state = location.state as { action?: 'in' | 'out' };
@@ -113,12 +115,68 @@ export function Cashbook() {
     try {
       const { startDate, endDate } = filters;
 
+      // Calculate Master Cash in Hand (Cumulative - matches Dashboard)
+      let masterCashQ = query(collection(db, 'cash_transactions'));
+      
+      const targetUid = (profile?.role === 'admin' || profile?.role === 'developer') ? selectedAccountantId : profile?.id;
+
+      // If accountant view, filter by who handled the cash
+      if (viewMode === 'accountant' && targetUid) {
+        masterCashQ = query(masterCashQ, where('created_by', '==', targetUid));
+      }
+
+      const masterCashSnap = await getDocs(masterCashQ);
+      
+      // Get global opening balance from settings
+      const settingsDoc = await getDoc(doc(db, 'settings', 'opening_balances'));
+      const openingBalances = settingsDoc.exists() ? settingsDoc.data() : { owner: 0, accountant: 0 };
+      
+      let masterBalance = viewMode === 'owner' ? (openingBalances.owner || 0) : (openingBalances.accountant || 0);
+      
+      masterCashSnap.docs.forEach(doc => {
+        const data = doc.data();
+        const paidBy = data.paid_by || 'accountant';
+        if (paidBy === viewMode) {
+          const amount = Number(data.amount) || 0;
+          if (data.type === 'in') masterBalance += amount;
+          else masterBalance -= amount;
+        }
+      });
+      
+      setTotalCashInHand(masterBalance);
+
+      // Now calculate running balance for the Ledger list (between filters)
+      
+      // 1. Get starting balance before startDate for the list
+      let beforeQuery = query(
+        collection(db, 'cash_transactions'),
+        where('date', '<', startDate)
+      );
+      if (viewMode === 'accountant' && targetUid) {
+        beforeQuery = query(beforeQuery, where('created_by', '==', targetUid));
+      }
+      const beforeSnap = await getDocs(beforeQuery);
+      
+      let listRunningBal = viewMode === 'owner' ? (openingBalances.owner || 0) : (openingBalances.accountant || 0);
+      beforeSnap.docs.forEach(doc => {
+        const data = doc.data();
+        if (data.paid_by === viewMode) {
+          const amount = Number(data.amount) || 0;
+          if (data.type === 'in') listRunningBal += amount;
+          else listRunningBal -= amount;
+        }
+      });
+      setOpeningBalance(listRunningBal);
+
       // Fetch Daily Records
       let dailyQuery = query(
         collection(db, 'daily_records'),
         where('date', '>=', startDate),
         where('date', '<=', endDate)
       );
+      if (viewMode === 'accountant' && targetUid) {
+        dailyQuery = query(dailyQuery, where('created_by', '==', targetUid));
+      }
       const dailySnap = await getDocs(dailyQuery);
 
       const dailyEntries: LedgerEntry[] = [];
@@ -167,6 +225,9 @@ export function Cashbook() {
         where('date', '>=', startDate),
         where('date', '<=', endDate)
       );
+      if (viewMode === 'accountant' && targetUid) {
+        busExpQuery = query(busExpQuery, where('created_by', '==', targetUid));
+      }
       const busExpSnap = await getDocs(busExpQuery);
       const busEntries: LedgerEntry[] = busExpSnap.docs
         .map(doc => {
@@ -193,6 +254,9 @@ export function Cashbook() {
         where('date', '>=', startDate),
         where('date', '<=', endDate)
       );
+      if (viewMode === 'accountant' && targetUid) {
+        compExpQuery = query(compExpQuery, where('created_by', '==', targetUid));
+      }
       const compExpSnap = await getDocs(compExpQuery);
       const compEntries: LedgerEntry[] = compExpSnap.docs
         .map(doc => {
@@ -214,11 +278,17 @@ export function Cashbook() {
         .filter(e => e.paid_by === viewMode);
 
       // Fetch Fee Collections
+      const feeStart = Timestamp.fromDate(new Date(startDate));
+      const feeEnd = Timestamp.fromDate(new Date(endDate));
+      
       let feeQuery = query(
         collection(db, 'fee_collections'),
-        where('date', '>=', Timestamp.fromDate(new Date(startDate))),
-        where('date', '<=', Timestamp.fromDate(new Date(endDate)))
+        where('date', '>=', feeStart),
+        where('date', '<=', feeEnd)
       );
+      if (viewMode === 'accountant' && targetUid) {
+        feeQuery = query(feeQuery, where('recorded_by', '==', targetUid));
+      }
       const feeSnap = await getDocs(feeQuery);
       const feeEntries: LedgerEntry[] = feeSnap.docs
         .map(doc => {
@@ -248,8 +318,8 @@ export function Cashbook() {
       );
 
       // Apply role-based filtering for accountants
-      if (profile?.role === 'accountant') {
-        cashQuery = query(cashQuery, where('created_by', '==', profile.id));
+      if (viewMode === 'accountant' && targetUid) {
+        cashQuery = query(cashQuery, where('created_by', '==', targetUid));
       }
 
       const cashSnap = await getDocs(cashQuery);
@@ -280,32 +350,6 @@ export function Cashbook() {
           return matchesView && !e.linked_id;
         });
 
-      // Calculate Running Balance
-      // 1. Get starting balance before startDate
-      let beforeQuery = query(
-        collection(db, 'cash_transactions'),
-        where('date', '<', startDate)
-      );
-      if (profile?.role === 'accountant') {
-        beforeQuery = query(beforeQuery, where('created_by', '==', profile.id));
-      }
-      const beforeSnap = await getDocs(beforeQuery);
-      
-      // Get global opening balance from settings
-      const settingsDoc = await getDoc(doc(db, 'settings', 'opening_balances'));
-      const globalOpening = settingsDoc.exists() ? (settingsDoc.data()[viewMode] || 0) : 0;
-      
-      let runningBalance = globalOpening;
-      beforeSnap.docs.forEach(doc => {
-        const data = doc.data();
-        if (data.paid_by === viewMode) {
-          const amount = Number(data.amount) || 0;
-          if (data.type === 'in') runningBalance += amount;
-          else runningBalance -= amount;
-        }
-      });
-      setOpeningBalance(runningBalance);
-
       // 2. Combine and sort ascending to calculate running balance
       const allEntries = [...dailyEntries, ...busEntries, ...compEntries, ...feeEntries, ...manualEntries]
         .filter(e => {
@@ -327,9 +371,9 @@ export function Cashbook() {
         });
 
       allEntries.forEach(entry => {
-        if (entry.type === 'Inflow') runningBalance += entry.amount;
-        else runningBalance -= entry.amount;
-        entry.running_balance = runningBalance;
+        if (entry.type === 'Inflow') listRunningBal += entry.amount;
+        else listRunningBal -= entry.amount;
+        entry.running_balance = listRunningBal;
       });
 
       // 3. Sort descending for display
@@ -343,9 +387,6 @@ export function Cashbook() {
       });
 
       setEntries(allEntries);
-
-      // Summing logic (matches Dashboard)
-      setTotalCashInHand(runningBalance);
     } catch (error) {
       console.error('Error fetching ledger:', error);
     } finally {
@@ -808,9 +849,27 @@ export function Cashbook() {
           className="lg:col-span-2 card flex flex-col justify-between border-2 border-border/50 bg-surface/50 backdrop-blur-sm"
         >
           <div className="flex items-center justify-between mb-6">
-            <div className="flex items-center space-x-2 text-secondary">
-              <Calendar className="h-4 w-4 stroke-[1.5px]" />
-              <span className="text-[10px] font-bold uppercase tracking-widest">Date Range Filter</span>
+            <div className="flex items-center space-x-6">
+              <div className="flex items-center space-x-2 text-secondary">
+                <Calendar className="h-4 w-4 stroke-[1.5px]" />
+                <span className="text-[10px] font-bold uppercase tracking-widest">Filters</span>
+              </div>
+              {(profile?.role === 'admin' || profile?.role === 'developer') && viewMode === 'accountant' && (
+                <div className="flex items-center space-x-2 animate-in fade-in slide-in-from-left-4 duration-500">
+                  <div className="h-4 w-[1px] bg-border mx-2" />
+                  <User className="h-4 w-4 text-accent" />
+                  <select
+                    value={selectedAccountantId}
+                    onChange={(e) => setSelectedAccountantId(e.target.value)}
+                    className="bg-transparent border-none text-[10px] font-bold uppercase tracking-widest focus:ring-0 cursor-pointer text-primary"
+                  >
+                    <option value={auth.currentUser?.uid}>My Ledger</option>
+                    {accountants.map(acc => (
+                      <option key={acc.id} value={acc.id}>{acc.full_name}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
             </div>
             <div className="h-2 w-2 rounded-full bg-accent animate-pulse" />
           </div>
