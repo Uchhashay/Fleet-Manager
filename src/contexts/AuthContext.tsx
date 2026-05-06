@@ -34,8 +34,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     let unsubscribeProfile: () => void;
 
     if (user) {
+      const timeout = setTimeout(() => setLoading(false), 10000);
+
       const profileRef = doc(db, 'profiles', user.uid);
       unsubscribeProfile = onSnapshot(profileRef, (docSnap) => {
+        clearTimeout(timeout);
         if (docSnap.exists()) {
           const data = { id: docSnap.id, ...docSnap.data() } as Profile;
           if (user.email === 'dhruvsingh349@gmail.com') {

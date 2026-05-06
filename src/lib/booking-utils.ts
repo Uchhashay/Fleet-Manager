@@ -1,26 +1,27 @@
 import { 
-  collection, 
-  query, 
-  orderBy, 
-  limit, 
-  getDocs,
+  runTransaction,
+  doc,
   Timestamp,
   serverTimestamp
 } from 'firebase/firestore';
 import { db } from './firebase';
 
 export async function generateNextDutySlipNumber(): Promise<string> {
-  const bookingsRef = collection(db, 'bookings');
-  const q = query(bookingsRef, orderBy('dutySlipNumber', 'desc'), limit(1));
-  const querySnapshot = await getDocs(q);
+  const counterRef = doc(db, 'counters', 'bookings');
+  
+  const nextNumber = await runTransaction(db, async (transaction) => {
+    const counterDoc = await transaction.get(counterRef);
+    let lastNumber = 0;
+    
+    if (counterDoc.exists()) {
+      lastNumber = counterDoc.data().lastDutySlipNumber || 0;
+    }
+    
+    const next = lastNumber + 1;
+    transaction.set(counterRef, { lastDutySlipNumber: next }, { merge: true });
+    return next;
+  });
 
-  if (querySnapshot.empty) {
-    return 'DS-000001';
-  }
-
-  const lastBooking = querySnapshot.docs[0].data();
-  const lastNumberStr = lastBooking.dutySlipNumber.split('-')[1];
-  const nextNumber = parseInt(lastNumberStr) + 1;
   return `DS-${nextNumber.toString().padStart(6, '0')}`;
 }
 

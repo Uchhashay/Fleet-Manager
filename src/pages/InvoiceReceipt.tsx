@@ -181,32 +181,48 @@ export function InvoiceReceipt() {
     updateOverdue();
   }, [invoices, profile]);
 
+  const invoicesWithAccuratePayments = useMemo(() => {
+    return invoices.map(inv => {
+      const associatedReceipts = receipts.filter(rcp => rcp.invoiceId === inv.id);
+      const totalPaid = associatedReceipts.reduce((sum, rcp) => sum + (rcp.amountReceived || 0), 0);
+      const balanceDue = Math.max(0, inv.totalAmount - totalPaid);
+      const status: InvoiceStatus = balanceDue <= 0 ? 'PAID' : (totalPaid > 0 ? 'PARTIAL' : inv.status);
+      
+      return {
+        ...inv,
+        paidAmount: totalPaid,
+        balanceDue,
+        status
+      };
+    });
+  }, [invoices, receipts]);
+
   const stats = useMemo(() => {
-    const outstanding = invoices.reduce((sum, inv) => sum + inv.balanceDue, 0);
+    const outstanding = invoicesWithAccuratePayments.reduce((sum, inv) => sum + inv.balanceDue, 0);
     const today = new Date();
     const next30Days = addDays(today, 30);
     
-    const overdue = invoices.filter(inv => 
+    const overdue = invoicesWithAccuratePayments.filter(inv => 
       inv.status !== 'PAID' && inv.dueDate && 
-      (inv.status === 'OVERDUE' || isAfter(today, endOfDay(inv.dueDate.toDate())))
+      (inv.status === 'OVERDUE' || isAfter(today, endOfDay(inv.dueDate.toDate() || new Date())))
     ).reduce((sum, inv) => sum + inv.balanceDue, 0);
 
-    const dueToday = invoices.filter(inv => 
+    const dueToday = invoicesWithAccuratePayments.filter(inv => 
       inv.status !== 'PAID' && inv.dueDate &&
-      !isAfter(today, endOfDay(inv.dueDate.toDate())) &&
-      format(inv.dueDate.toDate(), 'yyyy-MM-dd') === format(today, 'yyyy-MM-dd')
+      !isAfter(today, endOfDay(inv.dueDate.toDate() || new Date())) &&
+      format(inv.dueDate.toDate() || new Date(), 'yyyy-MM-dd') === format(today, 'yyyy-MM-dd')
     ).reduce((sum, inv) => sum + inv.balanceDue, 0);
 
-    const due30Days = invoices.filter(inv => 
+    const due30Days = invoicesWithAccuratePayments.filter(inv => 
       inv.status !== 'PAID' && inv.dueDate &&
-      !isAfter(today, endOfDay(inv.dueDate.toDate())) &&
-      format(inv.dueDate.toDate(), 'yyyy-MM-dd') !== format(today, 'yyyy-MM-dd') &&
-      isBefore(inv.dueDate.toDate(), next30Days) && 
-      isAfter(inv.dueDate.toDate(), today)
+      !isAfter(today, endOfDay(inv.dueDate.toDate() || new Date())) &&
+      format(inv.dueDate.toDate() || new Date(), 'yyyy-MM-dd') !== format(today, 'yyyy-MM-dd') &&
+      isBefore(inv.dueDate.toDate() || new Date(), next30Days) && 
+      isAfter(inv.dueDate.toDate() || new Date(), today)
     ).reduce((sum, inv) => sum + inv.balanceDue, 0);
 
     return { outstanding, dueToday, due30Days, overdue };
-  }, [invoices]);
+  }, [invoicesWithAccuratePayments]);
 
   const monthOptions = useMemo(() => {
     const options = [];
@@ -219,7 +235,7 @@ export function InvoiceReceipt() {
     return options;
   }, []);
 
-  const filteredInvoices = invoices.filter(inv => {
+  const filteredInvoices = invoicesWithAccuratePayments.filter(inv => {
     const name = inv.studentName || '';
     const invNum = inv.invoiceNumber || '';
     const search = searchTerm.toLowerCase();
@@ -290,7 +306,7 @@ export function InvoiceReceipt() {
   const handleWhatsApp = (type: 'invoice' | 'receipt', item: any) => {
     let message = '';
     if (type === 'invoice') {
-      message = `Dear ${item.fatherName}, Please find attached invoice [${item.invoiceNumber}] for [${item.month}] transport fees of ₹${item.totalAmount} for ${item.studentName}. Due Date: ${format(item.dueDate.toDate(), 'dd MMM yyyy')}. Thank you. - Jagriti Tours & Travels`;
+      message = `Dear ${item.fatherName}, Please find attached invoice [${item.invoiceNumber}] for [${item.month}] transport fees of ₹${item.totalAmount} for ${item.studentName}. Due Date: ${format(item.dueDate.toDate() || new Date(), 'dd MMM yyyy')}. Thank you. - Jagriti Tours & Travels`;
     } else {
       const desc = item.description || `invoice [${item.invoiceNumber}]`;
       message = `Dear ${item.fatherName}, Payment of ₹${item.amountReceived} received for ${item.studentName} against ${desc}. Receipt No: [${item.receiptNumber}]. Thank you. - Jagriti Tours & Travels`;
@@ -713,7 +729,7 @@ export function InvoiceReceipt() {
             setSelectedReceiptForView(null);
           }}
           receipt={selectedReceiptForView}
-          invoice={invoices.find(i => i.id === selectedReceiptForView.invoiceId)}
+          invoice={invoicesWithAccuratePayments.find(i => i.id === selectedReceiptForView.invoiceId)}
           profile={profile}
         />
       )}

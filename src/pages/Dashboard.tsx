@@ -411,25 +411,35 @@ export function Dashboard() {
       monthBookings: bookings.filter(b => b.createdAt && parseISO(typeof b.createdAt === 'string' ? b.createdAt : b.createdAt.toDate().toISOString()) >= startOfMonth(now)).length,
       pendingSalary: staff.reduce((total, s) => {
         const staffId = s.id;
-        // 1. Total Earnings from generated records
+        
+        // 1. Total Earned (Total history from salary records)
         const earned = salaryRecords
           .filter(sr => sr.staff_id === staffId)
           .reduce((sum, sr) => {
-            const breakdownSum = Number(sr.fixed_salary || 0) + Number(sr.duty_amount || 0) + Number(sr.allowances || 0);
-            return sum + (breakdownSum > 0 ? breakdownSum : Number(sr.net_payable || 0));
+            // Recompute locally to avoid stale stored values
+            const fixed = Number(sr.fixed_salary || 0);
+            const duty = Number(sr.duty_amount || 0);
+            const adjustments = Number(sr.adjustments || 0);
+            const allowances = Number(sr.allowances || 0);
+            const deductions = Number(sr.deductions || 0);
+            
+            const adjValue = (allowances !== 0 || deductions !== 0) ? (allowances - deductions) : adjustments;
+            const netPayable = fixed + duty + adjValue;
+            return sum + netPayable;
           }, 0);
-        // 2. Current Month's Ongoing Duties
+
+        // 2. Ungenerated Duty Pay for current month (Ongoing)
         const generatedMonths = new Set(salaryRecords.filter(sr => sr.staff_id === staffId).map(sr => sr.month));
-        const ungenerated = records.filter(dr => {
+        const ungenerated = allRecords.filter(dr => {
           const month = dr.date?.substring(0, 7);
           return (dr.driver_id === staffId || dr.helper_id === staffId) && month && !generatedMonths.has(month);
         }).reduce((sum, dr) => sum + (dr.driver_id === staffId ? Number(dr.driver_duty_payable || 0) : Number(dr.helper_duty_payable || 0)), 0);
-        // 3. Total Payments
+
+        // 3. Total Payments recorded
         const paid = cashTransactions.filter(t => 
-          t.staff_id === staffId || 
-          (['salary_advance', 'salary advance', 'salary', 'duty_payment', 'duty payment'].includes(t.category?.toLowerCase()) && 
-           t.description?.toLowerCase().includes(s.full_name.toLowerCase()))
+          t.staff_id === staffId && ['salary', 'salary_advance', 'duty_payment', 'salary advance', 'duty payment'].includes(t.category?.toLowerCase())
         ).reduce((sum, t) => sum + Number(t.amount || 0), 0);
+
         const bal = (earned + ungenerated) - paid;
         return total + (bal > 0 ? bal : 0);
       }, 0)
@@ -636,17 +646,22 @@ export function Dashboard() {
     const staffList = staff.map((s: any) => {
       const staffId = s.id;
       
-      // Calculate Total Earned (from Salary Records)
-      const earnedFromSalaries = salaryRecords
+      // Calculate Total Earned
+      const earned = salaryRecords
         .filter(sr => sr.staff_id === staffId)
         .reduce((sum, sr) => {
-          const breakdown = Number(sr.fixed_salary || 0) + Number(sr.allowances || 0) + Number(sr.duty_amount || 0);
-          return sum + (breakdown > 0 ? breakdown : Number(sr.net_payable || 0));
+          const fixed = Number(sr.fixed_salary || 0);
+          const duty = Number(sr.duty_amount || 0);
+          const adjustments = Number(sr.adjustments || 0);
+          const allowances = Number(sr.allowances || 0);
+          const deductions = Number(sr.deductions || 0);
+          const adjValue = (allowances !== 0 || deductions !== 0) ? (allowances - deductions) : adjustments;
+          return sum + fixed + duty + adjValue;
         }, 0);
 
       // Calculate Ungenerated Duties
       const generatedMonths = new Set(salaryRecords.filter(sr => sr.staff_id === staffId).map(sr => sr.month));
-      const ungeneratedDuties = records.filter(r => 
+      const ungeneratedDuties = allRecords.filter(r => 
         (r.driver_id === staffId || r.helper_id === staffId) && 
         r.date && !generatedMonths.has(r.date.substring(0, 7))
       ).reduce((sum, r) => {
@@ -654,16 +669,12 @@ export function Dashboard() {
         return sum + val;
       }, 0);
 
-      // Calculate Total Paid (fuzzy matching like Staff Manager)
+      // Calculate Total Paid
       const totalPayments = cashTransactions
-        .filter(t => {
-          const categoryMatch = ['salary', 'salary_advance', 'duty_payment', 'salary advance', 'duty payment'].includes(t.category?.toLowerCase());
-          const staffMatch = t.staff_id === staffId || (categoryMatch && t.description?.toLowerCase().includes(s.full_name.toLowerCase()));
-          return staffMatch;
-        })
+        .filter(t => t.staff_id === staffId && ['salary', 'salary_advance', 'duty_payment', 'salary advance', 'duty payment'].includes(t.category?.toLowerCase()))
         .reduce((sum, t) => sum + Number(t.amount || 0), 0);
 
-      const pendingSal = (earnedFromSalaries + ungeneratedDuties) - totalPayments;
+      const pendingSal = (earned + ungeneratedDuties) - totalPayments;
       const bus = buses.find(b => b.id === s.bus_id);
       
       const staffRecords = currentRecords.filter((r: any) => r.driver_id === s.id || r.helper_id === s.id);

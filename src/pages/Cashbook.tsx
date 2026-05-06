@@ -119,31 +119,42 @@ export function Cashbook() {
       const settingsDoc = await getDoc(doc(db, 'settings', 'opening_balances'));
       const openingBalances = settingsDoc.exists() ? settingsDoc.data() : { owner: 0, accountant: 0 };
       
-      const targetUid = (profile?.role === 'admin' || profile?.role === 'developer') ? selectedAccountantId : profile?.id;
+      const isOwner = profile?.role === 'admin' || profile?.role === 'developer';
+      const targetUid = isOwner ? selectedAccountantId : profile?.id;
       
-      // 1. Get ALL transactions to calculate the MASTER balance (Total Cash in Hand)
+      // 1. Get ALL transactions
       const masterCashSnap = await getDocs(collection(db, 'cash_transactions'));
-      let masterBalance = viewMode === 'owner' ? (Number(openingBalances.owner) || 0) : (Number(openingBalances.accountant) || 0);
       
-      masterCashSnap.docs.forEach(doc => {
-        const data = doc.data();
-        // Determine role for filtering
-        const recordRole = data.paid_by || 'accountant';
-        if (recordRole === viewMode) {
-          const amount = Number(data.amount) || 0;
-          if (data.type === 'in') masterBalance += amount;
-          else masterBalance -= amount;
-        }
-      });
+      // Accountant view: only their own transactions
+      // Owner view: EVERYTHING for total cash in hand, or filtered if they want specific accountant
+      let masterBalance = 0;
+      if (viewMode === 'owner') {
+        masterBalance = Number(openingBalances.owner || 0);
+        masterCashSnap.docs.forEach(doc => {
+          const data = doc.data();
+          if (data.type === 'in') masterBalance += Number(data.amount || 0);
+          else masterBalance -= Number(data.amount || 0);
+        });
+      } else {
+        masterBalance = Number(openingBalances.accountant || 0);
+        masterCashSnap.docs.forEach(doc => {
+          const data = doc.data();
+          if ((data.paid_by === 'accountant' || !data.paid_by) && (data.created_by === targetUid || !targetUid)) {
+            if (data.type === 'in') masterBalance += Number(data.amount || 0);
+            else masterBalance -= Number(data.amount || 0);
+          }
+        });
+      }
       setTotalCashInHand(masterBalance);
 
       // 2. Calculate Opening Balance for the filtered list (everything before startDate)
-      let listRunningBal = viewMode === 'owner' ? (Number(openingBalances.owner) || 0) : (Number(openingBalances.accountant) || 0);
+      let listRunningBal = viewMode === 'owner' ? Number(openingBalances.owner || 0) : Number(openingBalances.accountant || 0);
       masterCashSnap.docs.forEach(doc => {
         const data = doc.data();
-        const recordRole = data.paid_by || 'accountant';
-        if (recordRole === viewMode && data.date < startDate) {
-          const amount = Number(data.amount) || 0;
+        const matchesView = viewMode === 'owner' || ((data.paid_by === 'accountant' || !data.paid_by) && (data.created_by === targetUid || !targetUid));
+        
+        if (matchesView && data.date < startDate) {
+          const amount = Number(data.amount || 0);
           if (data.type === 'in') listRunningBal += amount;
           else listRunningBal -= amount;
         }
@@ -159,10 +170,15 @@ export function Cashbook() {
           
           // Better source detection
           let source: LedgerEntry['source'] = 'Manual Entry';
-          if (data.source === 'daily_entry' || data.linked_id?.startsWith('DE-')) source = 'Daily Entry';
+          if (data.source === 'daily_entry' || data.linked_id?.startsWith('DE-') || data.source_module === 'Daily Entry') source = 'Daily Entry';
+          else if (category === 'salary' || category === 'salary_advance' || category === 'duty_payment') source = 'Manual Entry'; // Will label as Staff Payment
           else if (data.category === 'bus_expense' || (data.linked_id && !data.category?.includes('salary'))) source = 'Bus Expense';
-          else if (data.category === 'fee_collection') source = 'Fee Collection';
-          else if (data.category === 'office_expense') source = 'Company Expense';
+          else if (data.category === 'fee_collection' || data.source_module === 'Fee Collection') source = 'Fee Collection';
+          else if (data.category === 'office_expense' || data.source_module === 'Company Expense') source = 'Company Expense';
+
+          if (category.includes('salary') || category.includes('duty_payment')) {
+            source = 'Manual Entry'; // Use manual to allow editing/deletion but we can label it specifically if needed
+          }
 
           // Description enrichment
           let description = data.description || '';
@@ -173,6 +189,9 @@ export function Cashbook() {
             }
           }
 
+          const recordRole = data.paid_by || 'accountant';
+          const matchesView = viewMode === 'owner' || (recordRole === 'accountant' && (data.created_by === targetUid || !targetUid));
+
           return {
             id: doc.id,
             date: data.date,
@@ -181,14 +200,18 @@ export function Cashbook() {
             amount: Number(data.amount) || 0,
             description,
             source: data.source_module || source,
-            paid_by: data.paid_by || 'accountant',
+            paid_by: recordRole,
             staff_id: data.staff_id,
             linked_id: data.linked_id,
             created_at: data.created_at,
             created_by: data.created_by
           } as LedgerEntry;
         })
-        .filter(e => e.paid_by === viewMode && e.date >= startDate && e.date <= endDate)
+        .filter(e => {
+          const recordRole = e.paid_by || 'accountant';
+          const matchesView = viewMode === 'owner' || (recordRole === 'accountant' && (e.created_by === targetUid || !targetUid));
+          return matchesView && e.date >= startDate && e.date <= endDate;
+        })
         .sort((a, b) => {
           const dateCompare = a.date.localeCompare(b.date);
           if (dateCompare !== 0) return dateCompare;

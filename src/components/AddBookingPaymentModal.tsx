@@ -6,7 +6,8 @@ import {
   writeBatch, 
   serverTimestamp, 
   Timestamp,
-  increment
+  increment,
+  getDocs
 } from 'firebase/firestore';
 import { useAuth } from '../contexts/AuthContext';
 import { handleFirestoreError, OperationType } from '../lib/firebase-utils';
@@ -45,16 +46,18 @@ export function AddBookingPaymentModal({ isOpen, onClose, booking }: AddBookingP
       const bookingRef = doc(db, 'bookings', booking.id);
       const paymentRef = doc(collection(db, 'bookings', booking.id, 'payments'));
       
-      const newTotalPaid = booking.totalPaid + formData.amount;
-      const newExtraCharges = (booking.extraCharges || 0) + formData.extraCharges;
-      const newFinalAmount = booking.settlementAmount + newExtraCharges;
-      const newBalanceDue = newFinalAmount - newTotalPaid;
+      // Recomputation logic: Query all payments to get the true totalPaid
+      const paymentsSnap = await getDocs(collection(db, 'bookings', booking.id, 'payments'));
+      const existingPaymentsTotal = paymentsSnap.docs.reduce((sum, d) => sum + (d.data().amount || 0), 0);
+      const totalPaid = existingPaymentsTotal + formData.amount;
       
-      let newStatus: BookingStatus = booking.status;
-      if (newBalanceDue <= 0 && booking.status !== 'CANCELLED') {
-        newStatus = 'SETTLED';
-      } else if (newTotalPaid > 0 && booking.status === 'CONFIRMED') {
-        newStatus = 'ADVANCE PAID';
+      const balanceDue = booking.finalAmount - totalPaid;
+      
+      let status: BookingStatus = booking.status;
+      if (balanceDue <= 0 && booking.status !== 'CANCELLED') {
+        status = 'SETTLED';
+      } else if (totalPaid > 0 && booking.status === 'CONFIRMED') {
+        status = 'ADVANCE PAID';
       }
 
       // 1. Add Payment
@@ -69,12 +72,9 @@ export function AddBookingPaymentModal({ isOpen, onClose, booking }: AddBookingP
 
       // 2. Update Booking
       batch.update(bookingRef, {
-        totalPaid: Number(newTotalPaid),
-        extraCharges: Number(newExtraCharges),
-        extraChargesReason: formData.extraChargesReason || booking.extraChargesReason,
-        finalAmount: Number(newFinalAmount),
-        balanceDue: Number(newBalanceDue),
-        status: newStatus,
+        totalPaid: Number(totalPaid),
+        balanceDue: Number(balanceDue),
+        status: status,
         updatedAt: serverTimestamp()
       });
 

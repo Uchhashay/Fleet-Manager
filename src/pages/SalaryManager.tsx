@@ -12,6 +12,32 @@ import { useAuth } from '../contexts/AuthContext';
 import { logActivity } from '../lib/activity-logger';
 import { handleFirestoreError, OperationType } from '../lib/firebase-utils';
 
+function recomputeSalaryRecord(record: Partial<SalaryRecord>, totalPaid: number): SalaryRecord {
+  const fixed = Number(record.fixed_salary || 0);
+  const duty = Number(record.duty_amount || 0);
+  const allowances = Number(record.allowances || 0);
+  const deductions = Number(record.deductions || 0);
+  const adjustments = Number(record.adjustments || 0);
+  
+  // Logic: Prefer breakdown (allowances - deductions), fallback to adjustments field if breakdown is 0
+  const adjValue = (allowances !== 0 || deductions !== 0) ? (allowances - deductions) : adjustments;
+  
+  const netPayable = fixed + duty + adjValue;
+  const pending = netPayable - totalPaid;
+  
+  let status: 'paid' | 'partial' | 'unpaid' = 'unpaid';
+  if (totalPaid >= netPayable && netPayable > 0) status = 'paid';
+  else if (totalPaid > 0) status = 'partial';
+
+  return {
+    ...(record as any),
+    net_payable: netPayable,
+    total_paid: totalPaid,
+    pending_balance: pending,
+    status
+  };
+}
+
 export function SalaryManager() {
   const { profile } = useAuth();
   const [staff, setStaff] = useState<Staff[]>([]);
@@ -56,6 +82,15 @@ export function SalaryManager() {
     fetchData();
   }, [currentMonth]);
 
+  useEffect(() => {
+    if (profile?.role) {
+      setPaymentData(prev => ({
+        ...prev,
+        paidBy: (profile.role === 'admin' || profile.role === 'developer') ? 'owner' : 'accountant'
+      }));
+    }
+  }, [profile?.role]);
+
   async function fetchData() {
     setLoading(true);
     try {
@@ -89,8 +124,14 @@ export function SalaryManager() {
 
       const staffList = snaps.staff.docs.map((doc: any) => ({ id: doc.id, ...doc.data() } as Staff)).sort((a: Staff, b: Staff) => a.full_name.localeCompare(b.full_name));
       const allRecords = snaps.records.docs.map((doc: any) => ({ id: doc.id, ...doc.data() } as DailyRecord));
-      const allSalaries = snaps.salaries.docs.map((doc: any) => ({ id: doc.id, ...doc.data() } as SalaryRecord));
+      const rawSalaries = snaps.salaries.docs.map((doc: any) => ({ id: doc.id, ...doc.data() } as SalaryRecord));
       const allCash = snaps.cash.docs.map((doc: any) => ({ id: doc.id, ...doc.data() } as CashTransaction));
+      
+      const allSalaries = rawSalaries.map(s => {
+        const totalPaid = allCash.filter(t => t.linked_id === s.id).reduce((sum, t) => sum + Number(t.amount || 0), 0);
+        return recomputeSalaryRecord(s, totalPaid);
+      });
+
       if (!snaps.org.empty) {
         setOrganization({ id: snaps.org.docs[0].id, ...snaps.org.docs[0].data() } as any);
       }
@@ -104,30 +145,16 @@ export function SalaryManager() {
       
       staffList.forEach(s => {
         const staffAllRecords = allRecords.filter(r => r.driver_id === s.id || r.helper_id === s.id);
-        const staffAllSalaries = allSalaries.filter(sal => sal.staff_id === s.id);
+        const staffCurrentMonthSalaries = allSalaries.filter(sal => sal.staff_id === s.id);
         const staffAllCash = allCash.filter(t => t.staff_id === s.id);
 
-        // Filter current month data for UI
         const currentMonthRecords = staffAllRecords.filter(r => r.date >= startOfCurrentMonthStr && r.date <= endOfCurrentMonthStr);
-        const currentMonthTransactions = staffAllCash.filter(t => t.date >= startOfCurrentMonthStr && t.date <= endOfCurrentMonthStr);
-        
         newStaffDuties[s.id] = currentMonthRecords.sort((a, b) => b.date.localeCompare(a.date));
         newStaffTransactions[s.id] = staffAllCash.sort((a, b) => b.date.localeCompare(a.date));
 
-        const existingSalary = staffAllSalaries.find(sal => sal.month === monthStr);
+        const existingSalary = staffCurrentMonthSalaries.find(sal => sal.month === monthStr);
         if (existingSalary) {
-          // Calculate total paid across all time (within our 13m window)
-          // For real production we might need a lifetime count or a proper ledger
-          // But for this overhauled version, we'll use existing total_paid logic or re-calculate
-          const totalPaidForRecord = staffAllCash
-            .filter(t => t.linked_id === existingSalary.id)
-            .reduce((sum, t) => sum + t.amount, 0);
-          
-          newSalaries[s.id] = {
-            ...existingSalary,
-            total_paid: totalPaidForRecord,
-            pending_balance: (existingSalary.net_payable || 0) - totalPaidForRecord
-          } as any;
+          newSalaries[s.id] = existingSalary;
         }
       });
 
