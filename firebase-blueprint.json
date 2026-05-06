@@ -167,11 +167,13 @@
       "properties": {
         "date": { "type": "string", "format": "date", "description": "Date of transaction (YYYY-MM-DD)." },
         "type": { "type": "string", "enum": ["in", "out"], "description": "Type of transaction." },
-        "category": { "type": "string", "enum": ["owner_transfer", "salary", "bus_expense", "office_expense", "fee_collection", "misc"], "description": "Category of transaction." },
+        "category": { "type": "string", "enum": ["owner_transfer", "salary", "salary_advance", "duty_payment", "bus_expense", "office_expense", "fee_collection", "daily_collection", "misc"], "description": "Category of transaction." },
         "amount": { "type": "number", "description": "Transaction amount." },
         "description": { "type": "string", "description": "Transaction description." },
         "linked_id": { "type": "string", "description": "ID of the linked record (salary, expense, etc.)." },
         "staff_id": { "type": "string", "description": "ID of the staff member for salary payments." },
+        "paid_by": { "type": "string", "enum": ["owner", "accountant"], "description": "Who holds the cash." },
+        "created_by": { "type": "string", "description": "UID of the user who recorded the transaction." },
         "created_at": { "type": "string", "format": "date-time", "description": "Creation timestamp." }
       },
       "required": ["date", "type", "category", "amount", "description"]

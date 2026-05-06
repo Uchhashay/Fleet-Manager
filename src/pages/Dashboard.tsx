@@ -42,7 +42,7 @@ import { useNavigate } from 'react-router-dom';
 
 export function Dashboard() {
   const navigate = useNavigate();
-  const [showCombined, setShowCombined] = useState(false);
+  const [showCombined, setShowCombined] = useState(true);
   const [timeframe, setTimeframe] = useState<'today' | 'yesterday' | 'week' | 'month' | 'year' | 'custom'>('month');
   const [customRange, setCustomRange] = useState({
     start: format(startOfMonth(new Date()), 'yyyy-MM-dd'),
@@ -311,8 +311,8 @@ export function Dashboard() {
     setOverdueCount(overdueCountVal);
 
     // Calculate Cash Balances
-    let accountantCash = rawData.openingBalances?.accountant || 0;
-    let ownerCash = rawData.openingBalances?.owner || 0;
+    let accountantCash = Number(rawData.openingBalances?.accountant || 0);
+    let ownerCash = Number(rawData.openingBalances?.owner || 0);
     cashTransactions.forEach(t => {
       const amount = Number(t.amount) || 0;
       const paidBy = t.paid_by || 'accountant';
@@ -409,12 +409,31 @@ export function Dashboard() {
       activeBuses: buses.filter(b => b.is_active !== false).length,
       activeStaff: staff.filter(s => s.is_active !== false).length,
       monthBookings: bookings.filter(b => b.createdAt && parseISO(typeof b.createdAt === 'string' ? b.createdAt : b.createdAt.toDate().toISOString()) >= startOfMonth(now)).length,
-      pendingSalary: salaryRecords.filter(s => s.status !== 'paid').reduce((sum, s) => sum + s.net_payable, 0)
+      pendingSalary: staff.reduce((total, s) => {
+        const staffId = s.id;
+        // 1. Total Earnings from generated records
+        const earned = salaryRecords
+          .filter(sr => sr.staff_id === staffId)
+          .reduce((sum, sr) => {
+            const breakdownSum = Number(sr.fixed_salary || 0) + Number(sr.duty_amount || 0) + Number(sr.allowances || 0);
+            return sum + (breakdownSum > 0 ? breakdownSum : Number(sr.net_payable || 0));
+          }, 0);
+        // 2. Current Month's Ongoing Duties
+        const generatedMonths = new Set(salaryRecords.filter(sr => sr.staff_id === staffId).map(sr => sr.month));
+        const ungenerated = records.filter(dr => {
+          const month = dr.date?.substring(0, 7);
+          return (dr.driver_id === staffId || dr.helper_id === staffId) && month && !generatedMonths.has(month);
+        }).reduce((sum, dr) => sum + (dr.driver_id === staffId ? Number(dr.driver_duty_payable || 0) : Number(dr.helper_duty_payable || 0)), 0);
+        // 3. Total Payments
+        const paid = cashTransactions.filter(t => 
+          t.staff_id === staffId || 
+          (['salary_advance', 'salary advance', 'salary', 'duty_payment', 'duty payment'].includes(t.category?.toLowerCase()) && 
+           t.description?.toLowerCase().includes(s.full_name.toLowerCase()))
+        ).reduce((sum, t) => sum + Number(t.amount || 0), 0);
+        const bal = (earned + ungenerated) - paid;
+        return total + (bal > 0 ? bal : 0);
+      }, 0)
     });
-    
-    // Correct pending salary logic: (net_payable sum for unpaid/partial records)
-    const truePendingSalary = salaryRecords.filter(s => s.status !== 'paid').reduce((sum, s) => sum + s.net_payable, 0);
-    setStats(prev => ({ ...prev, pendingSalary: truePendingSalary }));
 
     // Bus Comparison Cards
     const busComparison = buses.map((bus: any) => {
@@ -615,12 +634,40 @@ export function Dashboard() {
 
     // Staff Overview
     const staffList = staff.map((s: any) => {
+      const staffId = s.id;
+      
+      // Calculate Total Earned (from Salary Records)
+      const earnedFromSalaries = salaryRecords
+        .filter(sr => sr.staff_id === staffId)
+        .reduce((sum, sr) => {
+          const breakdown = Number(sr.fixed_salary || 0) + Number(sr.allowances || 0) + Number(sr.duty_amount || 0);
+          return sum + (breakdown > 0 ? breakdown : Number(sr.net_payable || 0));
+        }, 0);
+
+      // Calculate Ungenerated Duties
+      const generatedMonths = new Set(salaryRecords.filter(sr => sr.staff_id === staffId).map(sr => sr.month));
+      const ungeneratedDuties = records.filter(r => 
+        (r.driver_id === staffId || r.helper_id === staffId) && 
+        r.date && !generatedMonths.has(r.date.substring(0, 7))
+      ).reduce((sum, r) => {
+        const val = r.driver_id === staffId ? Number(r.driver_duty_payable || 0) : Number(r.helper_duty_payable || 0);
+        return sum + val;
+      }, 0);
+
+      // Calculate Total Paid (fuzzy matching like Staff Manager)
+      const totalPayments = cashTransactions
+        .filter(t => {
+          const categoryMatch = ['salary', 'salary_advance', 'duty_payment', 'salary advance', 'duty payment'].includes(t.category?.toLowerCase());
+          const staffMatch = t.staff_id === staffId || (categoryMatch && t.description?.toLowerCase().includes(s.full_name.toLowerCase()));
+          return staffMatch;
+        })
+        .reduce((sum, t) => sum + Number(t.amount || 0), 0);
+
+      const pendingSal = (earnedFromSalaries + ungeneratedDuties) - totalPayments;
+      const bus = buses.find(b => b.id === s.bus_id);
+      
       const staffRecords = currentRecords.filter((r: any) => r.driver_id === s.id || r.helper_id === s.id);
       const uniqueDays = new Set(staffRecords.map(r => r.date)).size;
-      const bus = buses.find(b => b.id === s.bus_id);
-      const pendingSal = salaryRecords
-        .filter(rec => rec.staff_id === s.id && rec.status !== 'paid')
-        .reduce((sum, rec) => sum + rec.net_payable, 0);
 
       return {
         name: s.full_name,

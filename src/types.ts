@@ -61,6 +61,7 @@ export interface Staff {
   id: string;
   full_name: string;
   role: 'admin' | 'accountant' | 'driver' | 'helper';
+  staff_type?: 'PERMANENT' | 'TEMPORARY';
   bus_id?: string;
   fixed_salary: number;
   duty_rate?: number;
@@ -176,6 +177,8 @@ export interface SalaryRecord {
   allowances: number;
   deductions: number;
   net_payable: number; // Total amount due for the month (Earnings - Deductions)
+  total_paid?: number;
+  pending_balance?: number;
   status: 'unpaid' | 'partial' | 'paid';
   notes?: string;
   created_at: any;
@@ -456,6 +459,7 @@ export interface BillTemplate {
 }
 
 export interface Organization {
+  id?: string;
   name: string;
   industry?: string;
   location?: string;

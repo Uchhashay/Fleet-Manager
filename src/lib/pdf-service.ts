@@ -1,7 +1,7 @@
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { format } from 'date-fns';
-import { Invoice, Receipt, Student, Organization, Booking, BookingPayment, Staff, SalaryRecord, DailyRecord, Bus } from '../types';
+import { Invoice, Receipt, Student, Organization, Booking, BookingPayment, Staff, SalaryRecord, DailyRecord, Bus, CashTransaction } from '../types';
 import { amountToWordsIndian } from './number-utils';
 
 const formatPDFCurrency = (amount: number) => {
@@ -897,6 +897,165 @@ export const generateDutyHistoryPDF = (
     doc.setTextColor(150, 150, 150);
     doc.text('Powered by Jagriti Fleet Manager', pageWidth / 2, doc.internal.pageSize.height - 10, { align: 'center' });
   }
+
+  return doc;
+};
+
+export const generateSalarySlipPDF = (
+  salary: SalaryRecord,
+  staff: Staff,
+  transactions: CashTransaction[],
+  org: Organization
+) => {
+  const doc = new jsPDF();
+  const pageWidth = doc.internal.pageSize.width;
+  const pageHeight = doc.internal.pageSize.height;
+  const primaryColor = [124, 58, 237]; // Purple #7C3AED
+
+  // Header helpers
+  const formatRupee = (amount: number) => {
+    return 'Rs. ' + new Intl.NumberFormat('en-IN', {
+      maximumFractionDigits: 0,
+    }).format(amount || 0);
+  };
+
+  // Header
+  doc.setFillColor(249, 250, 251);
+  doc.rect(0, 0, pageWidth, 40, 'F');
+
+  if (org.logo_url) {
+    try {
+      doc.addImage(org.logo_url, 'PNG', 15, 8, 24, 24);
+    } catch (e) {
+      console.error('PDF Logo Error:', e);
+    }
+  }
+
+  doc.setTextColor(17, 24, 39);
+  doc.setFontSize(20);
+  doc.setFont('helvetica', 'bold');
+  doc.text(org.name || 'JAGRITI TOURS & TRAVELS', 42, 20);
+  
+  doc.setFontSize(9);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(107, 114, 128);
+  doc.text(`${org.address_line1 || 'Delhi'} | PH: ${org.phone || ''}`, 42, 26);
+  doc.text(`Email: ${org.email || ''} | Website: ${org.website || ''}`, 42, 31);
+
+  doc.setFontSize(16);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(primaryColor[0], primaryColor[1], primaryColor[2]);
+  doc.text('SALARY SLIP', pageWidth - 15, 20, { align: 'right' });
+
+  // Employee Details
+  doc.setFillColor(249, 250, 251);
+  doc.roundedRect(15, 50, pageWidth - 30, 20, 2, 2, 'F');
+  
+  doc.setFontSize(10);
+  doc.setTextColor(17, 24, 39);
+  doc.setFont('helvetica', 'bold');
+  doc.text(`Name: ${staff.full_name}`, 20, 58);
+  doc.text(`Role: ${staff.role.toUpperCase()}`, 20, 65);
+  
+  doc.setFont('helvetica', 'normal');
+  try {
+    doc.text(`Month: ${format(new Date(salary.month + '-01'), 'MMMM yyyy')}`, pageWidth - 20, 58, { align: 'right' });
+  } catch (e) {
+    doc.text(`Month: ${salary.month}`, pageWidth - 20, 58, { align: 'right' });
+  }
+  doc.text(`Working Days: ${salary.working_days} days`, pageWidth - 20, 65, { align: 'right' });
+
+  // Earnings Table
+  const earnings = [
+    ['Description', 'Amount'],
+    ['Fixed Salary', formatRupee(salary.fixed_salary || 0)],
+    ['Duty Amount', formatRupee(salary.duty_amount || 0)],
+    ['Allowances', formatRupee(salary.allowances || 0)]
+  ];
+  const grossTotal = (salary.fixed_salary || 0) + (salary.duty_amount || 0) + (salary.allowances || 0);
+
+  autoTable(doc, {
+    startY: 80,
+    head: [earnings[0]],
+    body: (earnings.slice(1) as any[]).concat([[{ content: 'Gross Total', styles: { fontStyle: 'bold' } }, { content: formatRupee(grossTotal), styles: { fontStyle: 'bold' } }]]),
+    theme: 'striped',
+    headStyles: { fillColor: primaryColor as any, textColor: [255, 255, 255] },
+    columnStyles: { 1: { halign: 'right' } }
+  });
+
+  let currentY = (doc as any).lastAutoTable.finalY + 10;
+
+  // Deductions Table
+  const deductions = [
+    ['Description', 'Amount'],
+    ['Deductions', formatRupee(salary.deductions || 0)]
+  ];
+  
+  autoTable(doc, {
+    startY: currentY,
+    head: [deductions[0]],
+    body: (deductions.slice(1) as any[]).concat([[{ content: 'Net Payable', styles: { fontStyle: 'bold', fontSize: 12 } }, { content: formatRupee(salary.net_payable), styles: { fontStyle: 'bold', fontSize: 12 } }]]),
+    theme: 'striped',
+    headStyles: { fillColor: [75, 85, 99], textColor: [255, 255, 255] },
+    columnStyles: { 1: { halign: 'right' } }
+  });
+
+  currentY = (doc as any).lastAutoTable.finalY + 10;
+
+  // Payment History
+  if (transactions.length > 0) {
+    doc.setFontSize(11);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(17, 24, 39);
+    doc.text('PAYMENT HISTORY', 15, currentY);
+
+    autoTable(doc, {
+      startY: currentY + 5,
+      head: [['Date', 'Type', 'Amount', 'Paid By']],
+      body: transactions.map(t => [
+        t.date,
+        (t.category || '').replace('_', ' ').toUpperCase(),
+        formatRupee(t.amount),
+        t.paid_by || 'N/A'
+      ]),
+      theme: 'grid',
+      headStyles: { fillColor: [243, 244, 246], textColor: [0, 0, 0] },
+      styles: { fontSize: 8 },
+      columnStyles: { 2: { halign: 'right' } }
+    });
+    currentY = (doc as any).lastAutoTable.finalY + 10;
+  }
+
+  const totalPaid = transactions.reduce((sum, t) => sum + t.amount, 0);
+  const balanceDue = salary.net_payable - totalPaid;
+
+  doc.setFontSize(10);
+  doc.setFont('helvetica', 'bold');
+  doc.text(`Total Paid: ${formatRupee(totalPaid)}`, pageWidth - 15, currentY, { align: 'right' });
+  doc.text(`Balance Due: ${formatRupee(Math.max(0, balanceDue))}`, pageWidth - 15, currentY + 7, { align: 'right' });
+
+  // Footer
+  if (salary.notes) {
+    currentY += 20;
+    doc.setFontSize(9);
+    doc.setFont('helvetica', 'italic');
+    doc.setTextColor(107, 114, 128);
+    doc.text(`Notes: ${salary.notes}`, 15, currentY, { maxWidth: pageWidth - 30 });
+  }
+
+  const sigY = pageHeight - 40;
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(10);
+  doc.setTextColor(17, 24, 39);
+  doc.text('FOR: JAGRITI TOURS & TRAVELS', pageWidth - 20, sigY, { align: 'right' });
+  doc.line(pageWidth - 70, sigY + 15, pageWidth - 15, sigY + 15);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(8);
+  doc.text('AUTHORIZED SIGNATURE', pageWidth - 42.5, sigY + 20, { align: 'center' });
+
+  doc.setFontSize(7);
+  doc.setTextColor(156, 163, 175);
+  doc.text('Generated by Jagriti Fleet Manager', pageWidth / 2, pageHeight - 10, { align: 'center' });
 
   return doc;
 };

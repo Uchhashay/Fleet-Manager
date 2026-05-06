@@ -178,29 +178,71 @@ export function DeveloperTools() {
             const schoolEvening = schools.length > 0 ? schools[Math.floor(Math.random() * schools.length)] : 'Evening Route';
 
             const recordRef = doc(dailyRecordsRef);
+            const collections = {
+              school_morning: isSunday ? 0 : 1500 + Math.floor(Math.random() * 500),
+              school_evening: isSunday ? 0 : 1500 + Math.floor(Math.random() * 500),
+              charter_morning: !isSunday && Math.random() > 0.8 ? 1200 : 0,
+              charter_evening: !isSunday && Math.random() > 0.8 ? 1200 : 0,
+              private_booking: !isSunday && Math.random() > 0.9 ? 2000 : 0,
+            };
+
+            const totalColl = Object.values(collections).reduce((a, b) => a + b, 0);
+            const fuel = isSunday ? 0 : 1500 + Math.floor(Math.random() * 1000);
+            const driverPay = isSunday ? 0 : 500;
+            const helperPay = isSunday || !helper ? 0 : 300;
+            const totalExp = fuel + driverPay + helperPay;
+
             batch.set(recordRef, {
               date: dateStr,
               bus_id: bus.id,
               driver_id: driver.id,
               helper_id: helper?.id || '',
               is_holiday: isSunday,
-              school_morning: isSunday ? 0 : 1500 + Math.floor(Math.random() * 500),
-              school_evening: isSunday ? 0 : 1500 + Math.floor(Math.random() * 500),
+              ...collections,
               school_morning_name: isSunday ? '' : schoolMorning,
               school_evening_name: isSunday ? '' : schoolEvening,
-              charter_morning: !isSunday && Math.random() > 0.8 ? 1200 : 0,
-              charter_evening: !isSunday && Math.random() > 0.8 ? 1200 : 0,
-              private_booking: !isSunday && Math.random() > 0.9 ? 2000 : 0,
-              fuel_amount: isSunday ? 0 : 1500 + Math.floor(Math.random() * 1000),
+              fuel_amount: fuel,
               fuel_type: 'CNG',
-              driver_duty_payable: isSunday ? 0 : 500,
-              driver_duty_paid: isSunday ? 0 : 500,
-              helper_duty_payable: isSunday || !helper ? 0 : 300,
-              helper_duty_paid: isSunday || !helper ? 0 : 300,
+              driver_duty_payable: driverPay,
+              driver_duty_paid: driverPay,
+              helper_duty_payable: helperPay,
+              helper_duty_paid: helperPay,
               paid_by: 'owner',
               created_by: auth.currentUser?.uid || 'system',
               created_at: serverTimestamp()
             });
+
+            // Add corresponding cash transactions for cash in hand
+            if (totalColl > 0) {
+              const collRef = doc(collection(db, 'cash_transactions'));
+              batch.set(collRef, {
+                date: dateStr,
+                type: 'in',
+                category: 'daily_collection',
+                amount: totalColl,
+                description: `Dummy Collection: Bus ${(bus as any).registration_number}`,
+                linked_id: recordRef.id,
+                paid_by: 'owner',
+                created_by: auth.currentUser?.uid || 'system',
+                created_at: serverTimestamp()
+              });
+            }
+
+            if (totalExp > 0) {
+              const expRef = doc(collection(db, 'cash_transactions'));
+              batch.set(expRef, {
+                date: dateStr,
+                type: 'out',
+                category: 'bus_expense',
+                amount: totalExp,
+                description: `Dummy Expenses: Bus ${(bus as any).registration_number}`,
+                linked_id: recordRef.id,
+                paid_by: 'owner',
+                created_by: auth.currentUser?.uid || 'system',
+                created_at: serverTimestamp()
+              });
+            }
+
             count++;
           }
           

@@ -115,52 +115,34 @@ export function Cashbook() {
     try {
       const { startDate, endDate } = filters;
 
-      // Calculate Master Cash in Hand (Cumulative - matches Dashboard)
-      let masterCashQ = query(collection(db, 'cash_transactions'));
-      
-      const targetUid = (profile?.role === 'admin' || profile?.role === 'developer') ? selectedAccountantId : profile?.id;
-
-      // If accountant view, filter by who handled the cash
-      if (viewMode === 'accountant' && targetUid) {
-        masterCashQ = query(masterCashQ, where('created_by', '==', targetUid));
-      }
-
-      const masterCashSnap = await getDocs(masterCashQ);
-      
       // Get global opening balance from settings
       const settingsDoc = await getDoc(doc(db, 'settings', 'opening_balances'));
       const openingBalances = settingsDoc.exists() ? settingsDoc.data() : { owner: 0, accountant: 0 };
       
-      let masterBalance = viewMode === 'owner' ? (openingBalances.owner || 0) : (openingBalances.accountant || 0);
+      const targetUid = (profile?.role === 'admin' || profile?.role === 'developer') ? selectedAccountantId : profile?.id;
+      
+      // 1. Get ALL transactions to calculate the MASTER balance (Total Cash in Hand)
+      const masterCashSnap = await getDocs(collection(db, 'cash_transactions'));
+      let masterBalance = viewMode === 'owner' ? (Number(openingBalances.owner) || 0) : (Number(openingBalances.accountant) || 0);
       
       masterCashSnap.docs.forEach(doc => {
         const data = doc.data();
-        const paidBy = data.paid_by || 'accountant';
-        if (paidBy === viewMode) {
+        // Determine role for filtering
+        const recordRole = data.paid_by || 'accountant';
+        if (recordRole === viewMode) {
           const amount = Number(data.amount) || 0;
           if (data.type === 'in') masterBalance += amount;
           else masterBalance -= amount;
         }
       });
-      
       setTotalCashInHand(masterBalance);
 
-      // Now calculate running balance for the Ledger list (between filters)
-      
-      // 1. Get starting balance before startDate for the list
-      let beforeQuery = query(
-        collection(db, 'cash_transactions'),
-        where('date', '<', startDate)
-      );
-      if (viewMode === 'accountant' && targetUid) {
-        beforeQuery = query(beforeQuery, where('created_by', '==', targetUid));
-      }
-      const beforeSnap = await getDocs(beforeQuery);
-      
-      let listRunningBal = viewMode === 'owner' ? (openingBalances.owner || 0) : (openingBalances.accountant || 0);
-      beforeSnap.docs.forEach(doc => {
+      // 2. Calculate Opening Balance for the filtered list (everything before startDate)
+      let listRunningBal = viewMode === 'owner' ? (Number(openingBalances.owner) || 0) : (Number(openingBalances.accountant) || 0);
+      masterCashSnap.docs.forEach(doc => {
         const data = doc.data();
-        if (data.paid_by === viewMode) {
+        const recordRole = data.paid_by || 'accountant';
+        if (recordRole === viewMode && data.date < startDate) {
           const amount = Number(data.amount) || 0;
           if (data.type === 'in') listRunningBal += amount;
           else listRunningBal -= amount;
@@ -168,225 +150,70 @@ export function Cashbook() {
       });
       setOpeningBalance(listRunningBal);
 
-      // Fetch Daily Records
-      let dailyQuery = query(
-        collection(db, 'daily_records'),
-        where('date', '>=', startDate),
-        where('date', '<=', endDate)
-      );
-      if (viewMode === 'accountant' && targetUid) {
-        dailyQuery = query(dailyQuery, where('created_by', '==', targetUid));
-      }
-      const dailySnap = await getDocs(dailyQuery);
-
-      const dailyEntries: LedgerEntry[] = [];
-      dailySnap.docs.forEach(doc => {
-        const data = doc.data() as DailyRecord;
-        const paidBy = data.paid_by || 'accountant';
-        if (paidBy !== viewMode) return;
-
-        const inflow = (data.school_morning || 0) + (data.school_evening || 0) + (data.charter_morning || 0) + (data.charter_evening || 0) + (data.private_booking || 0);
-        const outflow = (data.fuel_amount || 0) + (data.driver_duty_paid || 0) + (data.helper_duty_paid || 0);
-        const createdAt = data.created_at;
-
-        if (inflow > 0) {
-          dailyEntries.push({
-            id: `${doc.id}-in`,
-            date: data.date,
-            type: 'Inflow',
-            category: 'Daily Collection',
-            amount: inflow,
-            description: `Bus ${data.bus_id} collections`,
-            source: 'Daily Entry',
-            paid_by: paidBy,
-            created_by: data.created_by,
-            created_at: createdAt
-          });
-        }
-        if (outflow > 0) {
-          dailyEntries.push({
-            id: `${doc.id}-out`,
-            date: data.date,
-            type: 'Outflow',
-            category: 'Daily Expense',
-            amount: outflow,
-            description: `Fuel & Duty for Bus ${data.bus_id}`,
-            source: 'Daily Entry',
-            paid_by: paidBy,
-            created_by: data.created_by,
-            created_at: createdAt
-          });
-        }
-      });
-
-      // Fetch Bus Expenses
-      let busExpQuery = query(
-        collection(db, 'bus_expenses'),
-        where('date', '>=', startDate),
-        where('date', '<=', endDate)
-      );
-      if (viewMode === 'accountant' && targetUid) {
-        busExpQuery = query(busExpQuery, where('created_by', '==', targetUid));
-      }
-      const busExpSnap = await getDocs(busExpQuery);
-      const busEntries: LedgerEntry[] = busExpSnap.docs
-        .map(doc => {
-          const data = doc.data() as BusExpense;
-          const paidBy = data.paid_by || 'accountant';
-          return {
-            id: doc.id,
-            date: data.date,
-            type: 'Outflow' as const,
-            category: data.category,
-            amount: data.amount,
-            description: data.description || `Bus ${data.bus_id} expense`,
-            source: 'Bus Expense' as const,
-            paid_by: paidBy,
-            created_by: data.created_by,
-            created_at: data.created_at
-          };
-        })
-        .filter(e => e.paid_by === viewMode);
-
-      // Fetch Company Expenses
-      let compExpQuery = query(
-        collection(db, 'company_expenses'),
-        where('date', '>=', startDate),
-        where('date', '<=', endDate)
-      );
-      if (viewMode === 'accountant' && targetUid) {
-        compExpQuery = query(compExpQuery, where('created_by', '==', targetUid));
-      }
-      const compExpSnap = await getDocs(compExpQuery);
-      const compEntries: LedgerEntry[] = compExpSnap.docs
-        .map(doc => {
-          const data = doc.data() as CompanyExpense;
-          const paidBy = data.paid_by || 'accountant';
-          return {
-            id: doc.id,
-            date: data.date,
-            type: 'Outflow' as const,
-            category: data.category,
-            amount: data.amount,
-            description: data.description || 'Company expense',
-            source: 'Company Expense' as const,
-            paid_by: paidBy,
-            created_by: data.created_by,
-            created_at: data.created_at
-          };
-        })
-        .filter(e => e.paid_by === viewMode);
-
-      // Fetch Fee Collections
-      const feeStart = Timestamp.fromDate(new Date(startDate));
-      const feeEnd = Timestamp.fromDate(new Date(endDate));
-      
-      let feeQuery = query(
-        collection(db, 'fee_collections'),
-        where('date', '>=', feeStart),
-        where('date', '<=', feeEnd)
-      );
-      if (viewMode === 'accountant' && targetUid) {
-        feeQuery = query(feeQuery, where('recorded_by', '==', targetUid));
-      }
-      const feeSnap = await getDocs(feeQuery);
-      const feeEntries: LedgerEntry[] = feeSnap.docs
+      // 3. Get transactions for the CURRENT range to show in the list
+      const ledgerEntries: LedgerEntry[] = masterCashSnap.docs
         .map(doc => {
           const data = doc.data();
-          const date = data.date instanceof Timestamp ? format(data.date.toDate(), 'yyyy-MM-dd') : data.date;
-          const paidBy = data.paid_by || 'accountant';
-          return {
-            id: doc.id,
-            date: date,
-            type: 'Inflow' as const,
-            category: 'Fee Collection',
-            amount: data.amount,
-            description: `${data.student_name} - ${data.school_name}`,
-            source: 'Fee Collection' as const,
-            paid_by: paidBy,
-            recorded_by: data.recorded_by,
-            created_at: data.created_at
-          };
-        })
-        .filter(e => e.paid_by === viewMode);
+          const category = data.category || 'misc';
+          const normalizedCategory = category.toLowerCase().replace('_', ' ');
+          
+          // Better source detection
+          let source: LedgerEntry['source'] = 'Manual Entry';
+          if (data.source === 'daily_entry' || data.linked_id?.startsWith('DE-')) source = 'Daily Entry';
+          else if (data.category === 'bus_expense' || (data.linked_id && !data.category?.includes('salary'))) source = 'Bus Expense';
+          else if (data.category === 'fee_collection') source = 'Fee Collection';
+          else if (data.category === 'office_expense') source = 'Company Expense';
 
-      // Fetch Manual Cash Transactions
-      let cashQuery = query(
-        collection(db, 'cash_transactions'),
-        where('date', '>=', startDate),
-        where('date', '<=', endDate)
-      );
+          // Description enrichment
+          let description = data.description || '';
+          if (data.staff_id) {
+            const s = staff.find(st => st.id === data.staff_id);
+            if (s && !description.includes(s.full_name)) {
+              description = `${description} [${s.full_name}]`.trim();
+            }
+          }
 
-      // Apply role-based filtering for accountants
-      if (viewMode === 'accountant' && targetUid) {
-        cashQuery = query(cashQuery, where('created_by', '==', targetUid));
-      }
-
-      const cashSnap = await getDocs(cashQuery);
-      const manualEntries: LedgerEntry[] = cashSnap.docs
-        .map(doc => {
-          const data = doc.data() as CashTransaction;
-          const paidBy = data.paid_by || 'accountant';
           return {
             id: doc.id,
             date: data.date,
-            type: data.type === 'in' ? 'Inflow' : 'Outflow' as const,
-            category: data.category.replace('_', ' '),
-            amount: data.amount,
-            description: data.description,
-            source: 'Manual Entry' as const,
-            paid_by: paidBy,
+            type: data.type === 'in' ? 'Inflow' : 'Outflow',
+            category: normalizedCategory.charAt(0).toUpperCase() + normalizedCategory.slice(1),
+            amount: Number(data.amount) || 0,
+            description,
+            source: data.source_module || source,
+            paid_by: data.paid_by || 'accountant',
             staff_id: data.staff_id,
-            linked_id: (data as any).linked_id,
-            created_at: data.created_at
+            linked_id: data.linked_id,
+            created_at: data.created_at,
+            created_by: data.created_by
           } as LedgerEntry;
         })
-        .filter(e => {
-          const matchesView = e.paid_by === viewMode;
-          // If accountant view, also ensure we only see our own if we are an accountant
-          if (profile?.role === 'accountant') {
-             return matchesView; // already filtered by query
-          }
-          return matchesView && !e.linked_id;
-        });
-
-      // 2. Combine and sort ascending to calculate running balance
-      const allEntries = [...dailyEntries, ...busEntries, ...compEntries, ...feeEntries, ...manualEntries]
-        .filter(e => {
-          // Extra safety for other collections if accountant
-          if (profile?.role === 'accountant') {
-            const data = e as any;
-            return (data.created_by === profile.id || data.recorded_by === profile.id);
-          }
-          return true;
-        })
+        .filter(e => e.paid_by === viewMode && e.date >= startDate && e.date <= endDate)
         .sort((a, b) => {
           const dateCompare = a.date.localeCompare(b.date);
           if (dateCompare !== 0) return dateCompare;
-          
-          // If same date, use created_at
           const aTime = a.created_at instanceof Timestamp ? a.created_at.toMillis() : 0;
           const bTime = b.created_at instanceof Timestamp ? b.created_at.toMillis() : 0;
           return aTime - bTime;
         });
 
-      allEntries.forEach(entry => {
+      // 4. Calculate running balance for the list entries
+      ledgerEntries.forEach(entry => {
         if (entry.type === 'Inflow') listRunningBal += entry.amount;
         else listRunningBal -= entry.amount;
         entry.running_balance = listRunningBal;
       });
 
-      // 3. Sort descending for display
-      allEntries.sort((a, b) => {
+      // 5. Sort descending for display
+      ledgerEntries.sort((a, b) => {
         const dateCompare = b.date.localeCompare(a.date);
         if (dateCompare !== 0) return dateCompare;
-        
         const aTime = a.created_at instanceof Timestamp ? a.created_at.toMillis() : 0;
         const bTime = b.created_at instanceof Timestamp ? b.created_at.toMillis() : 0;
         return bTime - aTime;
       });
 
-      setEntries(allEntries);
+      setEntries(ledgerEntries);
     } catch (error) {
       console.error('Error fetching ledger:', error);
     } finally {

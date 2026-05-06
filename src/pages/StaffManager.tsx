@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { db } from '../lib/firebase';
 import { collection, onSnapshot, addDoc, updateDoc, deleteDoc, doc, serverTimestamp, query, orderBy } from 'firebase/firestore';
-import { Staff, UserRole } from '../types';
+import { Staff, UserRole, SalaryRecord, DailyRecord, CashTransaction } from '../types';
 import { formatCurrency, cn } from '../lib/utils';
-import { UserPlus, Trash2, Edit2, X, Save, Users, Briefcase, IndianRupee, Clock, BarChart2, AlertTriangle, ChevronDown, ChevronRight, Phone, Calendar, Home, CreditCard } from 'lucide-react';
+import { UserPlus, Trash2, Edit2, X, Save, Users, Briefcase, IndianRupee, Clock, BarChart2, AlertTriangle, ChevronDown, ChevronRight, Phone, Calendar, Home, CreditCard, CheckCircle2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
@@ -13,6 +13,9 @@ import { logActivity } from '../lib/activity-logger';
 export function StaffManager() {
   const { profile } = useAuth();
   const [staff, setStaff] = useState<Staff[]>([]);
+  const [salaries, setSalaries] = useState<SalaryRecord[]>([]);
+  const [dailyRecords, setDailyRecords] = useState<DailyRecord[]>([]);
+  const [cashTransactions, setCashTransactions] = useState<CashTransaction[]>([]);
   const [loading, setLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
@@ -37,15 +40,115 @@ export function StaffManager() {
 
   useEffect(() => {
     setLoading(true);
-    const q = query(collection(db, 'staff'), orderBy('full_name'));
-    const unsubscribe = onSnapshot(q, (snap) => {
-      const staffList = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Staff));
-      setStaff(staffList);
-      setLoading(false);
-    }, (error) => handleFirestoreError(error, OperationType.LIST, 'staff'));
+    const staffQuery = collection(db, 'staff');
+    const salaryQuery = collection(db, 'salary_records');
+    const recordsQuery = collection(db, 'daily_records');
+    const cashQuery = collection(db, 'cash_transactions');
 
-    return () => unsubscribe();
+    let loaded = { staff: false, salaries: false, records: false, cash: false };
+    const checkAllLoaded = () => {
+      if (loaded.staff && loaded.salaries && loaded.records && loaded.cash) {
+        setLoading(false);
+      }
+    };
+
+    const unsubscribeStaff = onSnapshot(staffQuery, (snap) => {
+      const staffList = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Staff));
+      setStaff(staffList.sort((a, b) => a.full_name.localeCompare(b.full_name)));
+      loaded.staff = true;
+      checkAllLoaded();
+    }, (error) => {
+      console.error("Staff loading error:", error);
+      loaded.staff = true;
+      checkAllLoaded();
+    });
+
+    const unsubscribeSalaries = onSnapshot(salaryQuery, (snap) => {
+      const salaryList = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as SalaryRecord));
+      setSalaries(salaryList);
+      loaded.salaries = true;
+      checkAllLoaded();
+    }, (error) => {
+      console.error("Salaries loading error:", error);
+      loaded.salaries = true;
+      checkAllLoaded();
+    });
+
+    const unsubscribeRecords = onSnapshot(recordsQuery, (snap) => {
+      const recordList = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as DailyRecord));
+      setDailyRecords(recordList);
+      loaded.records = true;
+      checkAllLoaded();
+    }, (error) => {
+      console.error("Records loading error:", error);
+      loaded.records = true;
+      checkAllLoaded();
+    });
+
+    const unsubscribeCash = onSnapshot(cashQuery, (snap) => {
+      const cashList = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as CashTransaction));
+      setCashTransactions(cashList);
+      loaded.cash = true;
+      checkAllLoaded();
+    }, (error) => {
+      console.error("Cash loading error:", error);
+      loaded.cash = true;
+      checkAllLoaded();
+    });
+
+    return () => {
+      unsubscribeStaff();
+      unsubscribeSalaries();
+      unsubscribeRecords();
+      unsubscribeCash();
+    };
   }, []);
+
+  const getPendingBalance = (staffId: string) => {
+    const s = staff.find(st => st.id === staffId);
+    if (!s) return 0;
+
+    // 1. Total Earnings from generated months (Salary Records)
+    // We sum: Fixed Salary + Allowances + Duties
+    // Fallback to net_payable if individual fields are 0/missing
+    const generatedEarnings = salaries
+      .filter(sr => sr.staff_id === staffId)
+      .reduce((sum, sr) => {
+        const breakdownSum = Number(sr.fixed_salary || 0) + Number(sr.duty_amount || 0) + Number(sr.allowances || 0);
+        const effectiveEarnings = breakdownSum > 0 ? breakdownSum : Number(sr.net_payable || 0);
+        return sum + effectiveEarnings;
+      }, 0);
+
+    // 2. Current Month's Ongoing Duties
+    const generatedMonths = new Set(salaries.filter(sr => sr.staff_id === staffId).map(sr => sr.month));
+    
+    const ungeneratedDuties = dailyRecords
+      .filter(dr => {
+        const month = dr.date.substring(0, 7);
+        if (generatedMonths.has(month)) return false;
+        return dr.driver_id === staffId || dr.helper_id === staffId;
+      })
+      .reduce((sum, dr) => {
+        const isDriver = s.role === 'driver' && dr.driver_id === staffId;
+        const isHelper = s.role === 'helper' && dr.helper_id === staffId;
+        return sum + (isDriver ? Number(dr.driver_duty_payable || 0) : (isHelper ? Number(dr.helper_duty_payable || 0) : 0));
+      }, 0);
+
+    // 3. Total Payments & Advances from Cash Transactions
+    // Fallback search by name if staff_id is missing (for older/migrated data)
+    const staffTransactions = cashTransactions.filter(t => 
+      t.staff_id === staffId || 
+      (t.category === 'salary_advance' && t.description?.toLowerCase().includes(s.full_name.toLowerCase())) ||
+      (t.category === 'salary' && t.description?.toLowerCase().includes(s.full_name.toLowerCase())) ||
+      (t.category === 'duty_payment' && t.description?.toLowerCase().includes(s.full_name.toLowerCase()))
+    );
+    const totalPayments = staffTransactions.reduce((sum, t) => sum + Number(t.amount || 0), 0);
+
+    const balance = (generatedEarnings + ungeneratedDuties) - totalPayments;
+    
+    // Avoid floating point rounding issues for "Clear" status
+    return Math.abs(balance) < 1 ? 0 : balance;
+  };
 
   // Removed fetchStaff as it's replaced by onSnapshot hook logic above
 
@@ -201,9 +304,38 @@ export function StaffManager() {
                   </div>
                   <div>
                     <h3 className="font-bold text-primary tracking-tight">{s.full_name}</h3>
-                    <div className="flex items-center space-x-2 mt-0.5">
-                      <Briefcase className="h-3 w-3 text-secondary stroke-[1.5px]" />
-                      <span className="text-[10px] font-bold text-secondary uppercase tracking-widest">{s.role}</span>
+                    <div className="flex flex-col space-y-1 mt-0.5">
+                      <div className="flex items-center space-x-2">
+                        <Briefcase className="h-3 w-3 text-secondary stroke-[1.5px]" />
+                        <span className="text-[10px] font-bold text-secondary uppercase tracking-widest">{s.role}</span>
+                      </div>
+                      <div className="flex items-center space-x-1">
+                        {(() => {
+                          const balance = getPendingBalance(s.id);
+                          if (balance > 0) {
+                            return (
+                              <span className="text-[10px] font-bold text-warning flex items-center">
+                                <AlertTriangle className="h-3 w-3 mr-1" />
+                                Pending: {formatCurrency(balance)}
+                              </span>
+                            );
+                          } else if (balance < 0) {
+                            return (
+                              <span className="text-[10px] font-bold text-accent flex items-center bg-accent/5 px-1.5 py-0.5 rounded">
+                                <CreditCard className="h-3 w-3 mr-1" />
+                                Advance: {formatCurrency(Math.abs(balance))}
+                              </span>
+                            );
+                          } else {
+                            return (
+                              <span className="text-[10px] font-bold text-success flex items-center">
+                                <CheckCircle2 className="h-3 w-3 mr-1" />
+                                All Clear ✓
+                              </span>
+                            );
+                          }
+                        })()}
+                      </div>
                     </div>
                   </div>
                 </div>
