@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { readExcelFile, autoDetectColumns, detectDateFormat, mapRowsToTransactions } from '../lib/statement-utils';
+import { readExcelFile, autoDetectColumns, detectDateFormat, mapRowsToTransactions, runAutoMatch } from '../lib/statement-utils';
 import { BankAccount, ColumnMap, StatementTransaction } from '../types';
 import { db } from '../lib/firebase';
 import { collection, addDoc, doc, writeBatch, serverTimestamp } from 'firebase/firestore';
@@ -34,6 +34,7 @@ export function BankStatementUpload({
   });
   const [previewRows, setPreviewRows] = useState<Omit<StatementTransaction, 'id'>[]>([]);
   const [saving, setSaving] = useState(false);
+  const [matching, setMatching] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -154,12 +155,16 @@ export function BankStatementUpload({
       }
       if (count % 400 !== 0) await batch.commit();
 
+      setMatching(true);
+      await runAutoMatch(uploadRef.id, selectedAccountId);
+
       onUploadComplete(uploadRef.id);
       onClose();
     } catch (err: any) {
       setError(err.message || 'Failed to save statement');
     } finally {
       setSaving(false);
+      setMatching(false);
     }
   }
 
@@ -555,7 +560,7 @@ export function BankStatementUpload({
                     className="btn-primary flex items-center space-x-2 !px-10 disabled:opacity-50 shadow-lg shadow-accent/20"
                   >
                     {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
-                    <span>Confirm & Import</span>
+                    <span>{matching ? 'Matching transactions...' : 'Confirm & Import'}</span>
                   </button>
                 )}
               </div>
