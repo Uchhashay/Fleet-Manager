@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { db, auth } from '../lib/firebase';
-import { collection, query, where, getDocs, Timestamp, addDoc, serverTimestamp, orderBy, doc, getDoc, deleteDoc } from 'firebase/firestore';
+import { collection, query, where, getDocs, Timestamp, addDoc, serverTimestamp, orderBy, doc, getDoc, deleteDoc, orderBy as firestoreOrderBy } from 'firebase/firestore';
 import { format, startOfMonth, endOfMonth } from 'date-fns';
 import { 
   Download, 
@@ -16,13 +16,16 @@ import {
   X,
   PlusCircle,
   User,
-  Trash2
+  Trash2,
+  Landmark,
+  Building2 as BankIcon
 } from 'lucide-react';
 import { formatCurrency, cn } from '../lib/utils';
-import { DailyRecord, BusExpense, CompanyExpense, CashTransaction, Staff } from '../types';
+import { DailyRecord, BusExpense, CompanyExpense, CashTransaction, Staff, BankAccount, BankTransaction } from '../types';
 import { motion, AnimatePresence } from 'framer-motion';
 import { handleFirestoreError, OperationType } from '../lib/firebase-utils';
 import { logActivity } from '../lib/activity-logger';
+import { fetchActiveBankAccounts } from '../lib/bank-utils';
 
 import { useAuth } from '../contexts/AuthContext';
 import { useLocation } from 'react-router-dom';
@@ -62,6 +65,14 @@ export function Cashbook() {
     endDate: format(endOfMonth(new Date()), 'yyyy-MM-dd'),
   });
 
+  const [ledgerMode, setLedgerMode] = useState<'cash' | 'bank'>('cash');
+  const [bankAccounts, setBankAccounts] = useState<BankAccount[]>([]);
+  const [selectedBankAccountId, setSelectedBankAccountId] = useState<string>('');
+  const [bankEntries, setBankEntries] = useState<BankTransaction[]>([]);
+  const [bankOpeningBalance, setBankOpeningBalance] = useState(0);
+  const [bankRunningBalance, setBankRunningBalance] = useState(0);
+  const [bankLoading, setBankLoading] = useState(false);
+
   const [formData, setFormData] = useState({
     type: 'in' as 'in' | 'out',
     category: 'owner_transfer' as CashTransaction['category'],
@@ -87,6 +98,63 @@ export function Cashbook() {
     fetchLedger();
     fetchStaff();
   }, [filters, viewMode, selectedAccountantId]);
+
+  useEffect(() => {
+    if (ledgerMode === 'bank') {
+      fetchActiveBankAccounts().then(accounts => {
+        setBankAccounts(accounts);
+        if (accounts.length > 0 && !selectedBankAccountId) {
+          setSelectedBankAccountId(accounts[0].id);
+        }
+      });
+    }
+  }, [ledgerMode]);
+
+  useEffect(() => {
+    if (!selectedBankAccountId || ledgerMode !== 'bank') return;
+    fetchBankLedger();
+  }, [selectedBankAccountId, filters, ledgerMode]);
+
+  async function fetchBankLedger() {
+    setBankLoading(true);
+    try {
+      const account = bankAccounts.find(a => a.id === selectedBankAccountId);
+      if (!account) return;
+
+      const allTxSnap = await getDocs(query(
+        collection(db, 'bank_transactions'),
+        where('account_id', '==', selectedBankAccountId),
+        firestoreOrderBy('date', 'asc')
+      ));
+
+      const allTx = allTxSnap.docs.map(d => ({ id: d.id, ...d.data() } as BankTransaction));
+
+      // Opening balance = account opening_balance + all transactions before startDate
+      let openingBal = account.opening_balance;
+      allTx.forEach(tx => {
+        if (tx.date < filters.startDate) {
+          openingBal = tx.type === 'in' ? openingBal + tx.amount : openingBal - tx.amount;
+        }
+      });
+      setBankOpeningBalance(openingBal);
+
+      // Filter to date range
+      const filtered = allTx.filter(tx => tx.date >= filters.startDate && tx.date <= filters.endDate);
+
+      // Compute running balance
+      let running = openingBal;
+      const withRunning = filtered.map(tx => {
+        running = tx.type === 'in' ? running + tx.amount : running - tx.amount;
+        return { ...tx, running_balance: running };
+      });
+      setBankRunningBalance(running);
+      setBankEntries(withRunning.reverse()); // newest first for display
+    } catch (error) {
+      console.error('Error fetching bank ledger:', error);
+    } finally {
+      setBankLoading(false);
+    }
+  }
 
   useEffect(() => {
     const state = location.state as { action?: 'in' | 'out' };
@@ -327,6 +395,14 @@ export function Cashbook() {
   }, { inflow: 0, outflow: 0 });
 
   const netBalance = totals.inflow - totals.outflow;
+
+  const bankTotals = bankEntries.reduce((acc, e) => {
+    if (e.type === 'in') acc.inflow += e.amount;
+    else acc.outflow += e.amount;
+    return acc;
+  }, { inflow: 0, outflow: 0 });
+
+  const bankNetBalance = bankTotals.inflow - bankTotals.outflow;
 
   async function handleDeleteEntry(entry: LedgerEntry) {
     if (!confirm(`Are you sure you want to delete this ${entry.source} entry?`)) return;
@@ -691,6 +767,21 @@ export function Cashbook() {
         )}
       </AnimatePresence>
 
+      <div className="flex items-center gap-2 mb-4">
+        <button
+          onClick={() => setLedgerMode('cash')}
+          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-colors ${ledgerMode === 'cash' ? 'bg-accent text-white' : 'bg-surface text-secondary'}`}
+        >
+          <Wallet className="h-4 w-4" /> Cash Ledger
+        </button>
+        <button
+          onClick={() => setLedgerMode('bank')}
+          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-colors ${ledgerMode === 'bank' ? 'bg-accent text-white' : 'bg-surface text-secondary'}`}
+        >
+          <Landmark className="h-4 w-4" /> Bank Ledger
+        </button>
+      </div>
+
       {/* Filters & Summary */}
       <div className="grid gap-4 lg:grid-cols-3">
         <motion.div 
@@ -760,180 +851,312 @@ export function Cashbook() {
           {/* Decorative background element */}
           <div className="absolute -right-8 -top-8 h-32 w-32 bg-background/5 rounded-full blur-3xl group-hover:bg-background/10 transition-colors duration-500" />
           
-          <div className="flex items-center justify-between mb-8 relative z-10">
-            <div className="h-10 w-10 rounded-xl bg-background/10 flex items-center justify-center text-background shadow-inner">
-              <Wallet className="h-5 w-5 stroke-[1.5px]" />
-            </div>
-            <div className="text-right">
-              <span className="text-[10px] font-bold text-background/60 uppercase tracking-widest block">Current Balance</span>
-              <span className="text-[10px] font-medium text-background/40">{viewMode === 'owner' ? "Owner's Total Cash" : "Accountant's Total Cash"}</span>
-            </div>
-          </div>
-          <div className="relative z-10">
-            <h3 className="text-4xl font-bold text-background tracking-tighter font-mono mb-6">
-              {formatCurrency(totalCashInHand)}
-            </h3>
-            <div className="grid grid-cols-2 gap-y-4 gap-x-6 border-t border-background/10 pt-6">
-              <div className="space-y-1">
-                <div className="flex items-center space-x-1.5">
-                  <div className="h-1.5 w-1.5 rounded-full bg-background/40" />
-                  <p className="text-[9px] font-bold uppercase text-background/40 tracking-wider">Opening Bal.</p>
+          {ledgerMode === 'cash' ? (
+            <>
+              <div className="flex items-center justify-between mb-8 relative z-10">
+                <div className="h-10 w-10 rounded-xl bg-background/10 flex items-center justify-center text-background shadow-inner">
+                  <Wallet className="h-5 w-5 stroke-[1.5px]" />
                 </div>
-                <p className="text-sm font-bold text-background/80 font-mono">{formatCurrency(openingBalance)}</p>
-              </div>
-              <div className="space-y-1">
-                <div className="flex items-center space-x-1.5">
-                  <div className="h-1.5 w-1.5 rounded-full bg-accent" />
-                  <p className="text-[9px] font-bold uppercase text-background/40 tracking-wider">Period Net</p>
+                <div className="text-right">
+                  <span className="text-[10px] font-bold text-background/60 uppercase tracking-widest block">Current Balance</span>
+                  <span className="text-[10px] font-medium text-background/40">{viewMode === 'owner' ? "Owner's Total Cash" : "Accountant's Total Cash"}</span>
                 </div>
-                <p className="text-sm font-bold text-accent font-mono">{formatCurrency(totals.inflow - totals.outflow)}</p>
               </div>
-              <div className="space-y-1">
-                <div className="flex items-center space-x-1.5">
-                  <div className="h-1.5 w-1.5 rounded-full bg-primary/40" />
-                  <p className="text-[9px] font-bold uppercase text-background/40 tracking-wider">Closing Bal.</p>
+              <div className="relative z-10">
+                <h3 className="text-4xl font-bold text-background tracking-tighter font-mono mb-6">
+                  {formatCurrency(totalCashInHand)}
+                </h3>
+                <div className="grid grid-cols-2 gap-y-4 gap-x-6 border-t border-background/10 pt-6">
+                  <div className="space-y-1">
+                    <div className="flex items-center space-x-1.5">
+                      <div className="h-1.5 w-1.5 rounded-full bg-background/40" />
+                      <p className="text-[9px] font-bold uppercase text-background/40 tracking-wider">Opening Bal.</p>
+                    </div>
+                    <p className="text-sm font-bold text-background/80 font-mono">{formatCurrency(openingBalance)}</p>
+                  </div>
+                  <div className="space-y-1">
+                    <div className="flex items-center space-x-1.5">
+                      <div className="h-1.5 w-1.5 rounded-full bg-accent" />
+                      <p className="text-[9px] font-bold uppercase text-background/40 tracking-wider">Period Net</p>
+                    </div>
+                    <p className="text-sm font-bold text-accent font-mono">{formatCurrency(totals.inflow - totals.outflow)}</p>
+                  </div>
+                  <div className="space-y-1">
+                    <div className="flex items-center space-x-1.5">
+                      <div className="h-1.5 w-1.5 rounded-full bg-primary/40" />
+                      <p className="text-[9px] font-bold uppercase text-background/40 tracking-wider">Closing Bal.</p>
+                    </div>
+                    <p className="text-sm font-bold text-background/80 font-mono">{formatCurrency(openingBalance + totals.inflow - totals.outflow)}</p>
+                  </div>
+                  <div className="space-y-1">
+                    <div className="flex items-center space-x-1.5">
+                      <div className="h-1.5 w-1.5 rounded-full bg-success" />
+                      <p className="text-[9px] font-bold uppercase text-background/40 tracking-wider">Period Inflow</p>
+                    </div>
+                    <p className="text-sm font-bold text-success font-mono">{formatCurrency(totals.inflow)}</p>
+                  </div>
+                  <div className="space-y-1">
+                    <div className="flex items-center space-x-1.5">
+                      <div className="h-1.5 w-1.5 rounded-full bg-warning" />
+                      <p className="text-[9px] font-bold uppercase text-background/40 tracking-wider">Period Outflow</p>
+                    </div>
+                    <p className="text-sm font-bold text-warning font-mono">{formatCurrency(totals.outflow)}</p>
+                  </div>
                 </div>
-                <p className="text-sm font-bold text-background/80 font-mono">{formatCurrency(openingBalance + totals.inflow - totals.outflow)}</p>
               </div>
-              <div className="space-y-1">
-                <div className="flex items-center space-x-1.5">
-                  <div className="h-1.5 w-1.5 rounded-full bg-success" />
-                  <p className="text-[9px] font-bold uppercase text-background/40 tracking-wider">Period Inflow</p>
+            </>
+          ) : (
+            <>
+              <div className="flex items-center justify-between mb-8 relative z-10">
+                <div className="h-10 w-10 rounded-xl bg-background/10 flex items-center justify-center text-background shadow-inner">
+                  <Landmark className="h-5 w-5 stroke-[1.5px]" />
                 </div>
-                <p className="text-sm font-bold text-success font-mono">{formatCurrency(totals.inflow)}</p>
-              </div>
-              <div className="space-y-1">
-                <div className="flex items-center space-x-1.5">
-                  <div className="h-1.5 w-1.5 rounded-full bg-warning" />
-                  <p className="text-[9px] font-bold uppercase text-background/40 tracking-wider">Period Outflow</p>
+                <div className="text-right flex-1 ml-4">
+                  <span className="text-[10px] font-bold text-background/60 uppercase tracking-widest block">Bank Account</span>
+                  <select
+                    className="bg-transparent border-none text-lg font-bold text-background p-0 m-0 focus:ring-0 cursor-pointer w-full text-right"
+                    value={selectedBankAccountId}
+                    onChange={e => setSelectedBankAccountId(e.target.value)}
+                  >
+                    {bankAccounts.map(a => (
+                      <option key={a.id} value={a.id} className="text-primary">
+                        {a.account_name} — ****{a.account_number_last4}
+                      </option>
+                    ))}
+                  </select>
                 </div>
-                <p className="text-sm font-bold text-warning font-mono">{formatCurrency(totals.outflow)}</p>
               </div>
-            </div>
-          </div>
+              <div className="relative z-10">
+                <div className="grid grid-cols-2 gap-y-4 gap-x-6">
+                  <div className="space-y-1">
+                    <div className="flex items-center space-x-1.5">
+                      <div className="h-1.5 w-1.5 rounded-full bg-background/40" />
+                      <p className="text-[9px] font-bold uppercase text-background/40 tracking-wider">Opening Bal.</p>
+                    </div>
+                    <p className="text-sm font-bold text-background/80 font-mono">{formatCurrency(bankOpeningBalance)}</p>
+                  </div>
+                  <div className="space-y-1">
+                    <div className="flex items-center space-x-1.5">
+                      <div className="h-1.5 w-1.5 rounded-full bg-accent" />
+                      <p className="text-[9px] font-bold uppercase text-background/40 tracking-wider">Period Net</p>
+                    </div>
+                    <p className={cn(
+                      "text-sm font-bold font-mono",
+                      bankNetBalance < 0 ? "text-danger-light" : "text-accent"
+                    )}>
+                      {formatCurrency(bankNetBalance)}
+                    </p>
+                  </div>
+                  <div className="space-y-1">
+                    <div className="flex items-center space-x-1.5">
+                      <div className="h-1.5 w-1.5 rounded-full bg-primary/40" />
+                      <p className="text-[9px] font-bold uppercase text-background/40 tracking-wider">Closing Bal.</p>
+                    </div>
+                    <p className={cn(
+                      "text-sm font-bold font-mono",
+                      bankRunningBalance < 0 ? "text-danger-light" : "text-background/80"
+                    )}>
+                      {formatCurrency(bankRunningBalance)}
+                    </p>
+                  </div>
+                  <div className="space-y-1">
+                    <div className="flex items-center space-x-1.5">
+                      <div className="h-1.5 w-1.5 rounded-full bg-success" />
+                      <p className="text-[9px] font-bold uppercase text-background/40 tracking-wider">Period Inflow</p>
+                    </div>
+                    <p className="text-sm font-bold text-success font-mono">{formatCurrency(bankTotals.inflow)}</p>
+                  </div>
+                  <div className="space-y-1">
+                    <div className="flex items-center space-x-1.5">
+                      <div className="h-1.5 w-1.5 rounded-full bg-warning" />
+                      <p className="text-[9px] font-bold uppercase text-background/40 tracking-wider">Period Outflow</p>
+                    </div>
+                    <p className="text-sm font-bold text-warning font-mono">{formatCurrency(bankTotals.outflow)}</p>
+                  </div>
+                </div>
+              </div>
+            </>
+          )}
         </motion.div>
       </div>
 
       {/* Ledger Table */}
-      <div className="card !p-0 overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="table">
-            <thead>
-              <tr>
-                <th>Date</th>
-                <th>Source</th>
-                <th>Category</th>
-                <th>Description</th>
-                <th className="text-right">Amount</th>
-                <th className="text-right">Cash in Hand</th>
-                {profile?.role === 'admin' && <th className="text-right">Actions</th>}
-              </tr>
-            </thead>
-            <tbody>
-              {loading ? (
+      {ledgerMode === 'cash' && (
+        <div className="card !p-0 overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="table">
+              <thead>
                 <tr>
-                  <td colSpan={6} className="py-12 text-center">
-                    <div className="h-6 w-6 animate-spin rounded-full border-2 border-accent border-t-transparent mx-auto"></div>
-                  </td>
+                  <th>Date</th>
+                  <th>Source</th>
+                  <th>Category</th>
+                  <th>Description</th>
+                  <th className="text-right">Amount</th>
+                  <th className="text-right">Cash in Hand</th>
+                  {profile?.role === 'admin' && <th className="text-right">Actions</th>}
                 </tr>
-              ) : (
-                <>
-                  {entries.map((entry, idx) => (
-                    <motion.tr 
-                      key={entry.id}
-                      initial={{ opacity: 0, y: 5 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      transition={{ delay: idx * 0.02 }}
-                    >
-                      <td className="text-secondary font-medium whitespace-nowrap">
-                        {format(new Date(entry.date), 'dd MMM yyyy')}
-                      </td>
-                      <td>
-                        <div className="flex items-center space-x-2">
-                          <div className={cn(
-                            "h-6 w-6 rounded-full flex items-center justify-center",
-                            entry.source === 'Daily Entry' ? "bg-accent/10 text-accent" : 
-                            entry.source === 'Bus Expense' ? "bg-warning/10 text-warning" : 
-                            entry.source === 'Fee Collection' ? "bg-success/10 text-success" :
-                            entry.source === 'Manual Entry' ? "bg-primary/10 text-primary" :
-                            "bg-secondary/10 text-secondary"
-                          )}>
-                            {entry.source === 'Daily Entry' ? <BusIcon className="h-3 w-3 stroke-[1.5px]" /> : 
-                             entry.source === 'Bus Expense' ? <Receipt className="h-3 w-3 stroke-[1.5px]" /> : 
-                             entry.source === 'Fee Collection' ? <GraduationCap className="h-3 w-3 stroke-[1.5px]" /> :
-                             entry.source === 'Manual Entry' ? <Wallet className="h-3 w-3 stroke-[1.5px]" /> :
-                             <Building2 className="h-3 w-3 stroke-[1.5px]" />}
-                          </div>
-                          <span className="text-[10px] font-bold text-secondary uppercase tracking-widest">{entry.source}</span>
-                        </div>
-                      </td>
-                      <td>
-                        <span className="font-bold text-primary">{entry.category}</span>
-                      </td>
-                      <td className="max-w-xs">
-                        <div className="flex flex-col">
-                          <span className="text-secondary font-medium truncate">{entry.description}</span>
-                          {entry.staff_id && (
-                            <span className="text-[9px] text-accent font-bold uppercase tracking-wider mt-0.5">
-                              Staff: {staff.find(s => s.id === entry.staff_id)?.full_name || 'Unknown'}
-                            </span>
-                          )}
-                        </div>
-                      </td>
-                      <td className={cn(
-                        "text-right font-bold font-mono",
-                        entry.type === 'Inflow' ? "text-success" : "text-danger"
-                      )}>
-                        <div className="flex items-center justify-end space-x-1">
-                          <span>{entry.type === 'Inflow' ? '+' : '-'}{formatCurrency(entry.amount)}</span>
-                          {entry.type === 'Inflow' ? <ArrowUpRight className="h-3 w-3" /> : <ArrowDownRight className="h-3 w-3" />}
-                        </div>
-                      </td>
-                      <td className="text-right font-bold font-mono text-primary">
-                        {formatCurrency(entry.running_balance || 0)}
-                      </td>
-                      {profile?.role === 'admin' && (
-                        <td className="text-right">
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleDeleteEntry(entry);
-                            }}
-                            className="p-2 text-secondary hover:text-danger hover:bg-danger/10 rounded-lg transition-all"
-                            title="Delete Entry"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </button>
-                        </td>
-                      )}
-                    </motion.tr>
-                  ))}
-                  
-                  {entries.length === 0 && (
-                    <tr>
-                      <td colSpan={6} className="py-12 text-center text-secondary font-medium">
-                        No entries found for this period
-                      </td>
-                    </tr>
-                  )}
-
-                  {/* Opening Balance Row */}
-                  <tr className="bg-surface/30 border-t-2 border-border/50">
-                    <td className="text-secondary font-bold italic">Before {format(new Date(filters.startDate), 'dd MMM yyyy')}</td>
-                    <td colSpan={3} className="text-center text-[10px] font-bold uppercase tracking-widest text-secondary/50">Opening Balance Brought Forward</td>
-                    <td className="text-right font-bold font-mono text-secondary italic">
-                      {formatCurrency(openingBalance)}
-                    </td>
-                    <td className="text-right font-bold font-mono text-primary italic">
-                      {formatCurrency(openingBalance)}
+              </thead>
+              <tbody>
+                {loading ? (
+                  <tr>
+                    <td colSpan={6} className="py-12 text-center">
+                      <div className="h-6 w-6 animate-spin rounded-full border-2 border-accent border-t-transparent mx-auto"></div>
                     </td>
                   </tr>
-                </>
-              )}
-            </tbody>
-          </table>
+                ) : (
+                  <>
+                    {entries.map((entry, idx) => (
+                      <motion.tr 
+                        key={entry.id}
+                        initial={{ opacity: 0, y: 5 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ delay: idx * 0.02 }}
+                      >
+                        <td className="text-secondary font-medium whitespace-nowrap">
+                          {format(new Date(entry.date), 'dd MMM yyyy')}
+                        </td>
+                        <td>
+                          <div className="flex items-center space-x-2">
+                            <div className={cn(
+                              "h-6 w-6 rounded-full flex items-center justify-center",
+                              entry.source === 'Daily Entry' ? "bg-accent/10 text-accent" : 
+                              entry.source === 'Bus Expense' ? "bg-warning/10 text-warning" : 
+                              entry.source === 'Fee Collection' ? "bg-success/10 text-success" :
+                              entry.source === 'Manual Entry' ? "bg-primary/10 text-primary" :
+                              "bg-secondary/10 text-secondary"
+                            )}>
+                              {entry.source === 'Daily Entry' ? <BusIcon className="h-3 w-3 stroke-[1.5px]" /> : 
+                              entry.source === 'Bus Expense' ? <Receipt className="h-3 w-3 stroke-[1.5px]" /> : 
+                              entry.source === 'Fee Collection' ? <GraduationCap className="h-3 w-3 stroke-[1.5px]" /> :
+                              entry.source === 'Manual Entry' ? <Wallet className="h-3 w-3 stroke-[1.5px]" /> :
+                              <Building2 className="h-3 w-3 stroke-[1.5px]" />}
+                            </div>
+                            <span className="text-[10px] font-bold text-secondary uppercase tracking-widest">{entry.source}</span>
+                          </div>
+                        </td>
+                        <td>
+                          <span className="font-bold text-primary">{entry.category}</span>
+                        </td>
+                        <td className="max-w-xs">
+                          <div className="flex flex-col">
+                            <span className="text-secondary font-medium truncate">{entry.description}</span>
+                            {entry.staff_id && (
+                              <span className="text-[9px] text-accent font-bold uppercase tracking-wider mt-0.5">
+                                Staff: {staff.find(s => s.id === entry.staff_id)?.full_name || 'Unknown'}
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                        <td className={cn(
+                          "text-right font-bold font-mono",
+                          entry.type === 'Inflow' ? "text-success" : "text-danger"
+                        )}>
+                          <div className="flex items-center justify-end space-x-1">
+                            <span>{entry.type === 'Inflow' ? '+' : '-'}{formatCurrency(entry.amount)}</span>
+                            {entry.type === 'Inflow' ? <ArrowUpRight className="h-3 w-3" /> : <ArrowDownRight className="h-3 w-3" />}
+                          </div>
+                        </td>
+                        <td className="text-right font-bold font-mono text-primary">
+                          {formatCurrency(entry.running_balance || 0)}
+                        </td>
+                        {profile?.role === 'admin' && (
+                          <td className="text-right">
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleDeleteEntry(entry);
+                              }}
+                              className="p-2 text-secondary hover:text-danger hover:bg-danger/10 rounded-lg transition-all"
+                              title="Delete Entry"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </button>
+                          </td>
+                        )}
+                      </motion.tr>
+                    ))}
+                    
+                    {entries.length === 0 && (
+                      <tr>
+                        <td colSpan={6} className="py-12 text-center text-secondary font-medium">
+                          No entries found for this period
+                        </td>
+                      </tr>
+                    )}
+
+                    {/* Opening Balance Row */}
+                    <tr className="bg-surface/30 border-t-2 border-border/50">
+                      <td className="text-secondary font-bold italic">Before {format(new Date(filters.startDate), 'dd MMM yyyy')}</td>
+                      <td colSpan={3} className="text-center text-[10px] font-bold uppercase tracking-widest text-secondary/50">Opening Balance Brought Forward</td>
+                      <td className="text-right font-bold font-mono text-secondary italic">
+                        {formatCurrency(openingBalance)}
+                      </td>
+                      <td className="text-right font-bold font-mono text-primary italic">
+                        {formatCurrency(openingBalance)}
+                      </td>
+                    </tr>
+                  </>
+                )}
+              </tbody>
+            </table>
+          </div>
         </div>
-      </div>
+      )}
+
+      {ledgerMode === 'bank' && (
+        <div className="card">
+          <div className="flex justify-between items-center mb-4">
+            <div>
+              <p className="text-[10px] font-bold uppercase tracking-widest text-secondary">Opening Balance</p>
+              <p className="font-mono font-bold text-primary">{formatCurrency(bankOpeningBalance)}</p>
+            </div>
+            <div>
+              <p className="text-[10px] font-bold uppercase tracking-widest text-secondary">Closing Balance</p>
+              <p className={`font-mono font-bold ${bankRunningBalance < 0 ? 'text-danger' : 'text-primary'}`}>
+                {formatCurrency(bankRunningBalance)}
+              </p>
+            </div>
+          </div>
+          {bankLoading ? (
+            <div className="text-center py-8 text-secondary text-sm">Loading...</div>
+          ) : bankEntries.length === 0 ? (
+            <div className="text-center py-8 text-secondary text-sm">No transactions in this period</div>
+          ) : (
+            <table className="table w-full">
+              <thead>
+                <tr>
+                  <th>Date</th>
+                  <th>Description</th>
+                  <th>Mode</th>
+                  <th>Reference</th>
+                  <th className="text-right">In</th>
+                  <th className="text-right">Out</th>
+                  <th className="text-right">Balance</th>
+                </tr>
+              </thead>
+              <tbody>
+                {bankEntries.map(tx => (
+                  <tr key={tx.id}>
+                    <td className="text-xs">{tx.date}</td>
+                    <td className="text-xs">{tx.description}</td>
+                    <td className="text-xs font-bold">{tx.payment_mode}</td>
+                    <td className="text-xs text-secondary">{tx.reference_number || '—'}</td>
+                    <td className="text-xs text-right font-mono text-success">
+                      {tx.type === 'in' ? formatCurrency(tx.amount) : '—'}
+                    </td>
+                    <td className="text-xs text-right font-mono text-danger">
+                      {tx.type === 'out' ? formatCurrency(tx.amount) : '—'}
+                    </td>
+                    <td className={`text-xs text-right font-mono font-bold ${(tx as any).running_balance < 0 ? 'text-danger' : 'text-primary'}`}>
+                      {formatCurrency((tx as any).running_balance)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
     </div>
   );
 }

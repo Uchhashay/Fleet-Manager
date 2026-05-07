@@ -11,7 +11,7 @@ service cloud.firestore {
 
     function isAdmin() {
       return isAuthenticated() && (
-        request.auth.token.email == "dhruvsingh349@gmail.com" ||
+        request.auth.token.email == 'dhruvsingh349@gmail.com' ||
         (exists(/databases/$(database)/documents/profiles/$(request.auth.uid)) && 
          get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data.role in ['admin', 'developer'])
       );
@@ -25,13 +25,58 @@ service cloud.firestore {
       );
     }
 
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // Validation Helpers
+    function isValidBooking(data) {
+      return data.dutySlipNumber is string && 
+             data.dutySlipNumber.size() > 0 &&
+             data.dutySlipNumber.size() <= 64 &&
+             data.hirerName is string &&
+             data.hirerName.size() <= 200 &&
+             data.finalAmount is number &&
+             data.totalPaid is number &&
+             data.balanceDue is number &&
+             data.status is string;
+    }
+
+    function isValidHirer(data) {
+      return data.hirerName is string &&
+             data.hirerName.size() <= 200 &&
+             data.contactNumber is string &&
+             data.contactNumber.size() <= 20;
+    }
+
     function isOwner(userId) {
       return isAuthenticated() && request.auth.uid == userId;
     }
 
-    // Default deny
-    match /{document=**} {
-      allow read, write: if false;
+    // Validation Helpers for Bank
+    function isValidBankAccount(data) {
+      return data.account_name is string && data.account_name.size() <= 100 &&
+             data.bank_name is string && data.bank_name.size() <= 100 &&
+             data.account_type is string &&
+             data.opening_balance is number &&
+             data.current_balance is number;
+    }
+
+    function isValidBankTransaction(data) {
+      return data.date is string &&
+             data.type in ["in", "out"] &&
+             data.amount is number && 
+             data.description is string &&
+             data.account_id is string &&
+             data.payment_mode is string;
     }
 
     // Profiles (Users)
@@ -129,6 +174,23 @@ service cloud.firestore {
       allow write: if isAccountant();
     }
 
+    // Counters
+    match /counters/{counterId} {
+      allow read: if isAuthenticated();
+      allow write: if isAccountant();
+    }
+
+    // Bank Accounts
+    match /bank_accounts/{accountId} {
+      allow read: if isAuthenticated(); // Relaxed for debugging fetch error
+      allow write: if isAccountant();
+    }
+
+    match /bank_transactions/{txId} {
+      allow read: if isAuthenticated(); // Relaxed for debugging fetch error
+      allow write: if isAccountant();
+    }
+
     // Organization
     match /organization/{orgId} {
       allow read: if isAuthenticated();
@@ -180,15 +242,17 @@ service cloud.firestore {
     // Hirers & Bookings (Travel Agency)
     match /hirers/{hirerId} {
       allow read: if isAuthenticated();
-      allow write: if isAccountant();
+      allow write: if isAccountant() && isValidId(hirerId) && isValidHirer(incoming());
     }
 
     match /bookings/{bookingId} {
       allow read: if isAuthenticated();
-      allow write: if isAccountant();
+      allow create: if isAccountant() && isValidId(bookingId) && isValidBooking(incoming());
+      allow update: if isAccountant() && isValidId(bookingId) && isValidBooking(incoming());
       
       match /{allSubcollections=**} {
         allow read: if isAuthenticated();
+        // Relaxed write for subcollections like activity/payments for now to ensure functionality
         allow write: if isAccountant();
       }
     }
@@ -202,6 +266,24 @@ service cloud.firestore {
     match /receipts/{receiptId} {
       allow read: if isAuthenticated();
       allow write: if isAccountant();
+    }
+
+    // Statement Uploads & Transactions
+    match /statement_uploads/{uploadId} {
+      allow read: if isAccountant();
+      allow create, update: if isAccountant();
+      allow delete: if isAdmin();
+    }
+
+    match /statement_transactions/{txId} {
+      allow read: if isAccountant();
+      allow create, update: if isAccountant();
+      allow delete: if isAdmin();
+    }
+
+    // Default deny
+    match /{document=**} {
+      allow read, write: if false;
     }
   }
 }

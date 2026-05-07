@@ -10,7 +10,7 @@ import {
 } from 'firebase/firestore';
 import { useAuth } from '../contexts/AuthContext';
 import { handleFirestoreError, OperationType } from '../lib/firebase-utils';
-import { Booking } from '../types';
+import { Booking, PaymentMode } from '../types';
 import { X, AlertTriangle, Trash2, Calendar, Clock, DollarSign } from 'lucide-react';
 import { format } from 'date-fns';
 import { formatCurrency } from '../lib/utils';
@@ -30,7 +30,7 @@ export function CancelBookingModal({ isOpen, onClose, booking }: CancelBookingMo
     reason: '',
     refundAmount: 0,
     refundDate: format(new Date(), 'yyyy-MM-dd'),
-    refundMode: 'Cash' as 'Cash' | 'UPI' | 'Bank Transfer',
+    refundMode: 'Cash' as PaymentMode,
   });
 
   const handleCancel = async () => {

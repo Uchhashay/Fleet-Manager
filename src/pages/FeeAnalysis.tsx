@@ -335,12 +335,13 @@ export function FeeAnalysis() {
         return d && format(d, 'MMM yyyy') === monthStr;
       });
 
-      const modes: Record<string, number> = { Cash: 0, UPI: 0, 'Bank Transfer': 0 };
+      const modes: Record<string, number> = { Cash: 0, UPI: 0, NEFT: 0, RTGS: 0, IMPS: 0, Cheque: 0 };
       rcps.forEach(r => {
-        if (r.paymentMode in modes) {
-          modes[r.paymentMode] += r.amountReceived;
+        const mode = r.paymentMode as string;
+        if (mode in modes) {
+          modes[mode] += r.amountReceived;
         } else {
-          // If other modes exist
+          // Fallback for legacy or other modes
           modes['Other'] = (modes['Other'] || 0) + r.amountReceived;
         }
       });

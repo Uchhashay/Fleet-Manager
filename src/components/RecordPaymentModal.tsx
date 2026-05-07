@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { db, auth } from '../lib/firebase';
 import { 
   collection, 
@@ -14,7 +14,8 @@ import {
   where
 } from 'firebase/firestore';
 import { applyPaymentToInvoices } from '../lib/invoice-utils';
-import { Invoice, Organization } from '../types';
+import { recordBankTransaction, fetchActiveBankAccounts } from '../lib/bank-utils';
+import { Invoice, Organization, PaymentMode, BankAccount } from '../types';
 import { format } from 'date-fns';
 import { handleFirestoreError, OperationType } from '../lib/firebase-utils';
 import { formatCurrency } from '../lib/utils';
@@ -32,14 +33,27 @@ interface RecordPaymentModalProps {
 export function RecordPaymentModal({ isOpen, onClose, invoice, profile }: RecordPaymentModalProps) {
   const [amount, setAmount] = useState(invoice.balanceDue);
   const [date, setDate] = useState(format(new Date(), 'yyyy-MM-dd'));
-  const [mode, setMode] = useState<'Cash' | 'UPI' | 'Bank Transfer'>('Cash');
+  const [mode, setMode] = useState<PaymentMode>('Cash');
   const [type, setType] = useState<'Sunday Doorstep' | 'Regular via Driver'>('Regular via Driver');
   const [notes, setNotes] = useState('');
   const [loading, setLoading] = useState(false);
+  const [bankAccounts, setBankAccounts] = useState<BankAccount[]>([]);
+  const [accountId, setAccountId] = useState('');
+  const [referenceNumber, setReferenceNumber] = useState('');
+
+  useEffect(() => {
+    fetchActiveBankAccounts().then(setBankAccounts);
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!profile) return;
+
+    if (mode !== 'Cash' && !accountId) {
+      alert('Please select a bank account');
+      return;
+    }
+
     setLoading(true);
     try {
       const batch = writeBatch(db);
@@ -122,7 +136,7 @@ export function RecordPaymentModal({ isOpen, onClose, invoice, profile }: Record
         createdAt: serverTimestamp()
       });
 
-      // Add to cash transactions if Cash
+      // Add to cash/bank transactions
       if (mode === 'Cash') {
         const cashRef = doc(collection(db, 'cash_transactions'));
         batch.set(cashRef, {
@@ -133,12 +147,29 @@ export function RecordPaymentModal({ isOpen, onClose, invoice, profile }: Record
           description: `Fee collection for ${invoice.schoolName}: ${invoice.studentName} (${invoice.month})`,
           linked_id: invoice.id,
           paid_by: (profile.role === 'admin' || profile.role === 'developer') ? 'owner' : 'accountant',
+          payment_mode: 'Cash',
+          source_module: 'invoice_receipt',
           created_by: auth.currentUser?.uid,
           created_at: serverTimestamp()
         });
+        await batch.commit();
+      } else {
+        await batch.commit();
+        await recordBankTransaction({
+          date,
+          type: 'in',
+          amount,
+          description: `Fee collection for ${invoice.schoolName}: ${invoice.studentName} (${invoice.month})`,
+          category: 'fee_collection',
+          account_id: accountId,
+          payment_mode: mode,
+          reference_number: referenceNumber,
+          linked_id: invoice.id,
+          source_module: 'invoice_receipt',
+          created_by: auth.currentUser?.uid ?? ''
+        });
       }
 
-      await batch.commit();
       alert('Payment recorded successfully.');
       onClose();
     } catch (error) {
@@ -213,12 +244,19 @@ export function RecordPaymentModal({ isOpen, onClose, invoice, profile }: Record
               <label className="label">Payment Mode</label>
               <select
                 value={mode}
-                onChange={(e) => setMode(e.target.value as any)}
+                onChange={(e) => {
+                  setMode(e.target.value as PaymentMode);
+                  setAccountId('');
+                  setReferenceNumber('');
+                }}
                 className="input w-full bg-background"
               >
                 <option value="Cash">Cash</option>
                 <option value="UPI">UPI</option>
-                <option value="Bank Transfer">Bank Transfer</option>
+                <option value="NEFT">NEFT</option>
+                <option value="RTGS">RTGS</option>
+                <option value="IMPS">IMPS</option>
+                <option value="Cheque">Cheque</option>
               </select>
             </div>
             <div className="space-y-2">
@@ -233,6 +271,35 @@ export function RecordPaymentModal({ isOpen, onClose, invoice, profile }: Record
               </select>
             </div>
           </div>
+
+          {mode !== 'Cash' && (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 animate-in fade-in slide-in-from-top-2 duration-300">
+              <div className="space-y-2">
+                <label className="label">Bank Account</label>
+                <select 
+                  value={accountId}
+                  onChange={(e) => setAccountId(e.target.value)}
+                  className="input w-full bg-background"
+                  required
+                >
+                  <option value="">Select bank account</option>
+                  {bankAccounts.map(a => (
+                    <option key={a.id} value={a.id}>{a.account_name} — ****{a.account_number_last4}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="space-y-2">
+                <label className="label">Reference / UTR Number</label>
+                <input 
+                  type="text"
+                  value={referenceNumber}
+                  onChange={(e) => setReferenceNumber(e.target.value)}
+                  className="input w-full bg-background"
+                  placeholder="Leave blank if unknown"
+                />
+              </div>
+            </div>
+          )}
 
           <div className="space-y-2">
             <label className="label">Internal Notes</label>

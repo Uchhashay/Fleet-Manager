@@ -487,6 +487,50 @@
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["name", "content"]
+    },
+    "BankAccount": {
+      "title": "Bank Account",
+      "description": "Business bank account information.",
+      "type": "object",
+      "properties": {
+        "account_name": { "type": "string" },
+        "bank_name": { "type": "string" },
+        "account_number": { "type": "string" },
+        "account_number_last4": { "type": "string" },
+        "ifsc_code": { "type": "string" },
+        "account_type": { "type": "string", "enum": ["Savings", "Current", "Overdraft", "Credit Card"] },
+        "opening_balance": { "type": "number" },
+        "current_balance": { "type": "number" },
+        "overdraft_limit": { "type": "number" },
+        "is_active": { "type": "boolean" },
+        "created_at": { "type": "string", "format": "date-time" },
+        "updated_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["account_name", "bank_name", "account_number", "account_type", "opening_balance"]
+    },
+    "BankTransaction": {
+      "title": "Bank Transaction",
+      "description": "Transactions in bank accounts.",
+      "type": "object",
+      "properties": {
+        "date": { "type": "string", "format": "date" },
+        "type": { "type": "string", "enum": ["in", "out"] },
+        "amount": { "type": "number" },
+        "description": { "type": "string" },
+        "category": { "type": "string" },
+        "account_id": { "type": "string" },
+        "payment_mode": { "type": "string" },
+        "reference_number": { "type": "string" },
+        "cheque_number": { "type": "string" },
+        "cheque_date": { "type": "string" },
+        "linked_id": { "type": "string" },
+        "staff_id": { "type": "string" },
+        "source_module": { "type": "string" },
+        "reconciled": { "type": "boolean" },
+        "created_by": { "type": "string" },
+        "created_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["date", "type", "amount", "description", "account_id", "payment_mode"]
     }
   },
   "firestore": {
@@ -533,6 +577,14 @@
     "/cash_transactions/{transactionId}": {
       "schema": "CashTransaction",
       "description": "Accountant cash transactions."
+    },
+    "/bank_accounts/{accountId}": {
+      "schema": "BankAccount",
+      "description": "Business bank accounts."
+    },
+    "/bank_transactions/{transactionId}": {
+      "schema": "BankTransaction",
+      "description": "Bank account transactions."
     },
     "/settings/organization": {
       "schema": "Organization",

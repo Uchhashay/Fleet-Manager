@@ -16,10 +16,11 @@ import {
   getDoc,
   limit
 } from 'firebase/firestore';
-import { Bus, Staff } from '../types';
+import { Bus, Staff, BankAccount, PaymentMode } from '../types';
 import { cn } from '../lib/utils';
 import { handleFirestoreError, OperationType } from '../lib/firebase-utils';
 import { logActivity } from '../lib/activity-logger';
+import { recordBankTransaction, reverseBankTransaction, fetchActiveBankAccounts } from '../lib/bank-utils';
 import { 
   Save, 
   AlertCircle, 
@@ -105,6 +106,7 @@ export function ExpenseEntry() {
   const [activeTab, setActiveTab] = useState<'add' | 'list'>('add');
   const [step, setStep] = useState(1);
   const [buses, setBuses] = useState<Bus[]>([]);
+  const [bankAccounts, setBankAccounts] = useState<BankAccount[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [fetching, setFetching] = useState(false);
@@ -135,7 +137,10 @@ export function ExpenseEntry() {
     amount: 0,
     description: '',
     receipt_ref: '',
-    paid_by: 'accountant' as 'owner' | 'accountant'
+    paid_by: 'accountant' as 'owner' | 'accountant',
+    payment_mode: 'Cash' as PaymentMode,
+    account_id: '',
+    reference_number: ''
   });
 
   useEffect(() => {
@@ -151,6 +156,7 @@ export function ExpenseEntry() {
 
   useEffect(() => {
     fetchBuses();
+    fetchActiveBankAccounts().then(setBankAccounts);
     if (activeTab === 'list') {
       fetchExpenses();
     }
@@ -349,6 +355,21 @@ export function ExpenseEntry() {
         });
       }
 
+      // Also sync linked bank transaction if exists
+      const btQuery = query(
+        collection(db, 'bank_transactions'),
+        where('linked_id', '==', editingExpense.id),
+        limit(1)
+      );
+      const btSnap = await getDocs(btQuery);
+      if (!btSnap.empty) {
+        batch.update(doc(db, 'bank_transactions', btSnap.docs[0].id), {
+          date: updatedData.date,
+          amount: updatedData.amount,
+          description: `${editingExpense.type === 'bus' ? 'Bus' : 'Company'} Expense: ${updatedData.category}${updatedData.subcategory ? ` (${updatedData.subcategory})` : ''} - ${updatedData.description}`,
+        });
+      }
+
       // 3. Add to edit history
       const historyRef = doc(collection(db, table, editingExpense.id, 'editHistory'));
       batch.set(historyRef, {
@@ -418,6 +439,17 @@ export function ExpenseEntry() {
         batch.delete(doc(db, 'cash_transactions', ctSnap.docs[0].id));
       }
 
+      // Also reverse any linked bank transaction
+      const btQuery = query(
+        collection(db, 'bank_transactions'),
+        where('linked_id', '==', deleteConfirm.id),
+        limit(1)
+      );
+      const btSnap = await getDocs(btQuery);
+      if (!btSnap.empty) {
+        await reverseBankTransaction(btSnap.docs[0].id);
+      }
+
       await batch.commit();
 
       // Log activity
@@ -450,6 +482,11 @@ export function ExpenseEntry() {
       return;
     }
 
+    if (formData.payment_mode !== 'Cash' && !formData.account_id) {
+      setMessage({ type: 'error', text: 'Please select a bank account for non-cash payments' });
+      return;
+    }
+
     setSaving(true);
     setMessage(null);
 
@@ -463,21 +500,36 @@ export function ExpenseEntry() {
 
       const docRef = await addDoc(collection(db, table), payload);
 
-      // Log cash transaction
-      try {
+      const description = `${type === 'bus' ? 'Bus' : 'Company'} Expense: ${formData.category}${formData.subcategory ? ` (${formData.subcategory})` : ''} - ${formData.description}`;
+
+      if (formData.payment_mode === 'Cash') {
         await addDoc(collection(db, 'cash_transactions'), {
           date: formData.date,
           type: 'out',
           category: type === 'bus' ? 'bus_expense' : 'office_expense',
           amount: formData.amount,
-          description: `${type === 'bus' ? 'Bus' : 'Company'} Expense: ${formData.category}${formData.subcategory ? ` (${formData.subcategory})` : ''} - ${formData.description}`,
+          description,
           linked_id: docRef.id,
           paid_by: formData.paid_by,
+          payment_mode: 'Cash',
+          source_module: 'expense_entry',
           created_by: auth.currentUser?.uid,
           created_at: serverTimestamp()
         });
-      } catch (error) {
-        handleFirestoreError(error, OperationType.CREATE, 'cash_transactions');
+      } else {
+        await recordBankTransaction({
+          date: formData.date,
+          type: 'out',
+          amount: formData.amount,
+          description,
+          category: type === 'bus' ? 'bus_expense' : 'office_expense',
+          account_id: formData.account_id,
+          payment_mode: formData.payment_mode,
+          reference_number: formData.reference_number,
+          linked_id: docRef.id,
+          source_module: 'expense_entry',
+          created_by: auth.currentUser?.uid ?? ''
+        });
       }
 
       setMessage({ type: 'success', text: 'Expense saved successfully!' });
@@ -502,7 +554,10 @@ export function ExpenseEntry() {
         receipt_ref: '', 
         category: '', 
         subcategory: '', 
-        paid_by: profile?.role === 'admin' ? 'owner' : 'accountant' 
+        paid_by: profile?.role === 'admin' ? 'owner' : 'accountant',
+        payment_mode: 'Cash',
+        account_id: '',
+        reference_number: ''
       }));
       
       setTimeout(() => setMessage(null), 3000);
@@ -820,6 +875,53 @@ export function ExpenseEntry() {
                           <span className="text-xs uppercase tracking-widest">Owner</span>
                         </button>
                       </div>
+                    </div>
+
+                    <div className="space-y-4">
+                      <div className="space-y-2">
+                        <label className="label">Payment Mode</label>
+                        <select 
+                          value={formData.payment_mode}
+                          onChange={(e) => setFormData({ ...formData, payment_mode: e.target.value as PaymentMode, account_id: '', reference_number: '' })}
+                          className="input"
+                        >
+                          <option value="Cash">Cash</option>
+                          <option value="UPI">UPI</option>
+                          <option value="NEFT">NEFT</option>
+                          <option value="RTGS">RTGS</option>
+                          <option value="IMPS">IMPS</option>
+                          <option value="Cheque">Cheque</option>
+                        </select>
+                      </div>
+
+                      {formData.payment_mode !== 'Cash' && (
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 animate-in fade-in slide-in-from-top-2 duration-300">
+                          <div className="space-y-2">
+                            <label className="label">Bank Account</label>
+                            <select 
+                              value={formData.account_id}
+                              onChange={(e) => setFormData({ ...formData, account_id: e.target.value })}
+                              className="input"
+                              required
+                            >
+                              <option value="">Select bank account</option>
+                              {bankAccounts.map(a => (
+                                <option key={a.id} value={a.id}>{a.account_name} — ****{a.account_number_last4}</option>
+                              ))}
+                            </select>
+                          </div>
+                          <div className="space-y-2">
+                            <label className="label">Reference / UTR Number</label>
+                            <input 
+                              type="text"
+                              value={formData.reference_number}
+                              onChange={(e) => setFormData({ ...formData, reference_number: e.target.value })}
+                              className="input"
+                              placeholder="Leave blank if unknown"
+                            />
+                          </div>
+                        </div>
+                      )}
                     </div>
 
                     <div className="space-y-2">

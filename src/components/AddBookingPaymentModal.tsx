@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { db } from '../lib/firebase';
 import { 
   collection, 
@@ -7,11 +7,13 @@ import {
   serverTimestamp, 
   Timestamp,
   increment,
-  getDocs
+  getDocs,
+  addDoc
 } from 'firebase/firestore';
 import { useAuth } from '../contexts/AuthContext';
 import { handleFirestoreError, OperationType } from '../lib/firebase-utils';
-import { Booking, BookingPayment, BookingStatus } from '../types';
+import { recordBankTransaction, fetchActiveBankAccounts } from '../lib/bank-utils';
+import { Booking, BookingPayment, BookingStatus, PaymentMode, BankAccount } from '../types';
 import { X, CreditCard, DollarSign, Calendar, CheckCircle2, Plus } from 'lucide-react';
 import { format } from 'date-fns';
 import { motion } from 'framer-motion';
@@ -29,16 +31,30 @@ export function AddBookingPaymentModal({ isOpen, onClose, booking }: AddBookingP
   const [formData, setFormData] = useState({
     amount: 0,
     paymentDate: format(new Date(), 'yyyy-MM-dd'),
-    paymentMode: 'Cash' as 'Cash' | 'UPI' | 'Bank Transfer',
+    paymentMode: 'Cash' as PaymentMode,
     receivedBy: profile?.full_name || '',
     extraCharges: 0,
     extraChargesReason: '',
     notes: '',
+    account_id: '',
+    reference_number: ''
   });
+
+  const [bankAccounts, setBankAccounts] = useState<BankAccount[]>([]);
+
+  useEffect(() => {
+    fetchActiveBankAccounts().then(setBankAccounts);
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!profile) return;
+
+    if (formData.paymentMode !== 'Cash' && !formData.account_id) {
+      alert('Please select a bank account');
+      return;
+    }
+
     setLoading(true);
 
     try {
@@ -94,6 +110,36 @@ export function AddBookingPaymentModal({ isOpen, onClose, booking }: AddBookingP
       });
 
       await batch.commit();
+
+      if (formData.paymentMode !== 'Cash') {
+        await recordBankTransaction({
+          date: formData.paymentDate,
+          type: 'in',
+          amount: formData.amount,
+          description: `Booking Payment: ${booking.dutySlipNumber} - ${booking.hirerName}`,
+          category: 'booking_payment',
+          account_id: formData.account_id,
+          payment_mode: formData.paymentMode,
+          reference_number: formData.reference_number,
+          linked_id: booking.id,
+          source_module: 'booking_payment',
+          created_by: profile?.id ?? ''
+        });
+      } else {
+        await addDoc(collection(db, 'cash_transactions'), {
+          date: formData.paymentDate,
+          type: 'in',
+          category: 'booking_payment',
+          amount: formData.amount,
+          description: `Booking Payment: ${booking.dutySlipNumber} - ${booking.hirerName}`,
+          linked_id: booking.id,
+          payment_mode: 'Cash',
+          source_module: 'booking_payment',
+          created_by: profile?.id,
+          created_at: serverTimestamp()
+        });
+      }
+
       onClose();
     } catch (error) {
       handleFirestoreError(error, OperationType.WRITE, 'bookings');
@@ -157,11 +203,14 @@ export function AddBookingPaymentModal({ isOpen, onClose, booking }: AddBookingP
                  <select 
                     className="input w-full"
                     value={formData.paymentMode}
-                    onChange={(e) => setFormData(prev => ({ ...prev, paymentMode: e.target.value as any }))}
+                    onChange={(e) => setFormData(prev => ({ ...prev, paymentMode: e.target.value as PaymentMode, account_id: '', reference_number: '' }))}
                  >
                     <option value="Cash">Cash</option>
                     <option value="UPI">UPI</option>
-                    <option value="Bank Transfer">Bank Transfer</option>
+                    <option value="NEFT">NEFT</option>
+                    <option value="RTGS">RTGS</option>
+                    <option value="IMPS">IMPS</option>
+                    <option value="Cheque">Cheque</option>
                  </select>
               </div>
               <div className="space-y-2">
@@ -175,6 +224,35 @@ export function AddBookingPaymentModal({ isOpen, onClose, booking }: AddBookingP
                  />
               </div>
            </div>
+
+           {formData.paymentMode !== 'Cash' && (
+             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 animate-in fade-in slide-in-from-top-2 duration-300">
+               <div className="space-y-2">
+                 <label className="label">Bank Account</label>
+                 <select 
+                   value={formData.account_id}
+                   onChange={(e) => setFormData(prev => ({ ...prev, account_id: e.target.value }))}
+                   className="input"
+                   required
+                 >
+                   <option value="">Select bank account</option>
+                   {bankAccounts.map(a => (
+                     <option key={a.id} value={a.id}>{a.account_name} — ****{a.account_number_last4}</option>
+                   ))}
+                 </select>
+               </div>
+               <div className="space-y-2">
+                 <label className="label">Reference / UTR Number</label>
+                 <input 
+                   type="text"
+                   value={formData.reference_number}
+                   onChange={(e) => setFormData(prev => ({ ...prev, reference_number: e.target.value }))}
+                   className="input"
+                   placeholder="Leave blank if unknown"
+                 />
+               </div>
+             </div>
+           )}
 
            <div className="p-4 bg-accent/5 rounded-2xl border border-accent/20 space-y-4">
               <div className="flex items-center gap-2 mb-2">

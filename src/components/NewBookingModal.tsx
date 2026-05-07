@@ -18,7 +18,7 @@ import {
 import { useAuth } from '../contexts/AuthContext';
 import { handleFirestoreError, OperationType } from '../lib/firebase-utils';
 import { cn } from '../lib/utils';
-import { Hirer, Booking, BookingStatus } from '../types';
+import { Hirer, Booking, BookingStatus, PaymentMode } from '../types';
 import { X, Search, User, Phone, MapPin, Calendar, Clock, CreditCard, DollarSign, Plus } from 'lucide-react';
 import { format, parseISO } from 'date-fns';
 import { generateNextDutySlipNumber } from '../lib/booking-utils';
@@ -63,7 +63,7 @@ export function NewBookingModal({ isOpen, onClose, hirer }: NewBookingModalProps
   // Advance Payment State
   const [advancePayment, setAdvancePayment] = useState({
     amount: 0,
-    paymentMode: 'Cash' as 'Cash' | 'UPI' | 'Bank Transfer',
+    paymentMode: 'Cash' as PaymentMode,
     paymentDate: format(new Date(), 'yyyy-MM-dd'),
     notes: '',
   });
@@ -523,7 +523,10 @@ export function NewBookingModal({ isOpen, onClose, hirer }: NewBookingModalProps
                 >
                   <option value="Cash">Cash</option>
                   <option value="UPI">UPI</option>
-                  <option value="Bank Transfer">Bank Transfer</option>
+                  <option value="NEFT">NEFT</option>
+                  <option value="RTGS">RTGS</option>
+                  <option value="IMPS">IMPS</option>
+                  <option value="Cheque">Cheque</option>
                 </select>
               </div>
 

@@ -36,9 +36,11 @@ import {
   Legend
 } from 'recharts';
 import { format, subMonths, startOfMonth, endOfMonth, startOfDay, endOfDay, subDays, startOfWeek, endOfWeek, differenceInDays, parseISO } from 'date-fns';
-import { AccountantTransaction, FeeCollection, Bus, Staff, Profile, DailyRecord, Booking, Invoice, SalaryRecord } from '../types';
+import { AccountantTransaction, FeeCollection, Bus, Staff, Profile, DailyRecord, Booking, Invoice, SalaryRecord, BankAccount } from '../types';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
+import { fetchActiveBankAccounts } from '../lib/bank-utils';
+import { Landmark } from 'lucide-react';
 
 export function Dashboard() {
   const navigate = useNavigate();
@@ -88,9 +90,15 @@ export function Dashboard() {
   const [staffOverview, setStaffOverview] = useState<any[]>([]);
   const [recentActivity, setRecentActivity] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [bankAccounts, setBankAccounts] = useState<BankAccount[]>([]);
+  const [totalBankBalance, setTotalBankBalance] = useState(0);
 
   useEffect(() => {
     fetchDashboardData();
+    fetchActiveBankAccounts().then(accounts => {
+      setBankAccounts(accounts);
+      setTotalBankBalance(accounts.reduce((sum, a) => sum + a.current_balance, 0));
+    });
   }, []);
 
   useEffect(() => {
@@ -855,49 +863,85 @@ export function Dashboard() {
       </div>
 
       {/* Cash Balances Section (Moved here to match image) */}
-      <div className="grid gap-6 sm:grid-cols-3">
-        <motion.div 
+      <div className="grid gap-6 sm:grid-cols-4">
+        <motion.div
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
-          className="card bg-accent/5 border-accent/20 shadow-xl shadow-accent/5"
+          transition={{ delay: 0 }}
+          className="card bg-success/5 border-success/20"
         >
           <div className="flex items-center justify-between mb-4">
-            <p className="text-[10px] font-bold uppercase tracking-widest text-accent">Total Cash in Hand</p>
-            <DollarSign className="h-4 w-4 text-accent stroke-[1.5px]" />
+            <p className="text-[10px] font-bold uppercase tracking-widest text-success">Total Cash in Hand</p>
+            <DollarSign className="h-4 w-4 text-success stroke-[1.5px]" />
           </div>
           <h3 className="text-3xl font-bold font-mono tracking-tighter text-primary">
             {formatCurrency(stats.totalCash)}
           </h3>
+          <p className="text-[10px] text-secondary mt-2 font-medium">
+            Combined balance
+          </p>
         </motion.div>
 
-        <motion.div 
+        <motion.div
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.1 }}
-          className="card bg-success/5 border-success/20"
+          className="card bg-surface"
         >
           <div className="flex items-center justify-between mb-4">
-            <p className="text-[10px] font-bold uppercase tracking-widest text-success">Accountant Cash</p>
-            <Users className="h-4 w-4 text-success stroke-[1.5px]" />
+            <p className="text-[10px] font-bold uppercase tracking-widest text-secondary">Accountant Cash</p>
+            <DollarSign className="h-4 w-4 text-secondary stroke-[1.5px]" />
           </div>
           <h3 className="text-3xl font-bold font-mono tracking-tighter text-primary">
             {formatCurrency(stats.accountantCash)}
           </h3>
+          <p className="text-[10px] text-secondary mt-2 font-medium italic">
+            In safe/pouch
+          </p>
         </motion.div>
 
-        <motion.div 
+        <motion.div
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.2 }}
-          className="card bg-warning/5 border-warning/20"
+          className="card bg-surface"
         >
           <div className="flex items-center justify-between mb-4">
-            <p className="text-[10px] font-bold uppercase tracking-widest text-warning">Owner Cash</p>
-            <Users className="h-4 w-4 text-warning stroke-[1.5px]" />
+            <p className="text-[10px] font-bold uppercase tracking-widest text-secondary">Owner Cash</p>
+            <DollarSign className="h-4 w-4 text-secondary stroke-[1.5px]" />
           </div>
           <h3 className="text-3xl font-bold font-mono tracking-tighter text-primary">
             {formatCurrency(stats.ownerCash)}
           </h3>
+          <p className="text-[10px] text-secondary mt-2 font-medium italic">
+            Owner's desk
+          </p>
+        </motion.div>
+
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.3 }}
+          className="card bg-blue-500/5 border-blue-500/20"
+        >
+          <div className="flex items-center justify-between mb-4">
+            <p className="text-[10px] font-bold uppercase tracking-widest text-blue-500">Total Bank Balance</p>
+            <Landmark className="h-4 w-4 text-blue-500 stroke-[1.5px]" />
+          </div>
+          <h3 className="text-3xl font-bold font-mono tracking-tighter text-primary">
+            {formatCurrency(totalBankBalance)}
+          </h3>
+          <p className="text-[10px] text-secondary mt-2 font-medium">
+            {bankAccounts.length} account{bankAccounts.length !== 1 ? 's' : ''}
+          </p>
+          {bankAccounts.map(a => (
+            <div key={a.id} className="flex items-center justify-between mt-1">
+              <span className="text-[10px] text-secondary">{a.account_name}</span>
+              <span className={`text-[10px] font-mono font-bold ${a.current_balance < 0 ? 'text-danger' : 'text-primary'}`}>
+                {formatCurrency(a.current_balance)}
+              </span>
+            </div>
+          ))}
         </motion.div>
       </div>
 

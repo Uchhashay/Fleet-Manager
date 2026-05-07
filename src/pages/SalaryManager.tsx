@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { db, auth } from '../lib/firebase';
 import { collection, getDocs, query, where, orderBy, setDoc, doc, serverTimestamp, addDoc, deleteDoc } from 'firebase/firestore';
-import { Staff, SalaryRecord, CashTransaction, DailyRecord } from '../types';
+import { Staff, SalaryRecord, CashTransaction, DailyRecord, PaymentMode, BankAccount } from '../types';
 import { formatCurrency, cn } from '../lib/utils';
 import { Save, CheckCircle2, AlertCircle, ChevronLeft, ChevronRight, Calculator, Calendar, User, Briefcase, Clock, Wallet, X, IndianRupee, History, ArrowDownRight, ArrowUpRight, MessageSquare, Trash2, Download, Plus, Filter, UserX, UserCheck, ChevronDown, ChevronUp, Edit2 } from 'lucide-react';
 import { format, startOfMonth, endOfMonth, subMonths, isSameMonth, parseISO } from 'date-fns';
@@ -11,6 +11,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useAuth } from '../contexts/AuthContext';
 import { logActivity } from '../lib/activity-logger';
 import { handleFirestoreError, OperationType } from '../lib/firebase-utils';
+import { recordBankTransaction, fetchActiveBankAccounts } from '../lib/bank-utils';
 
 function recomputeSalaryRecord(record: Partial<SalaryRecord>, totalPaid: number): SalaryRecord {
   const fixed = Number(record.fixed_salary || 0);
@@ -44,6 +45,7 @@ export function SalaryManager() {
   const [loading, setLoading] = useState(true);
   const [currentMonth, setCurrentMonth] = useState(new Date());
   const [salaries, setSalaries] = useState<Record<string, SalaryRecord>>({});
+  const [bankAccounts, setBankAccounts] = useState<BankAccount[]>([]);
   const [staffDuties, setStaffDuties] = useState<Record<string, DailyRecord[]>>({});
   const [staffTransactions, setStaffTransactions] = useState<Record<string, CashTransaction[]>>({});
   const [allMonthlySalaries, setAllMonthlySalaries] = useState<SalaryRecord[]>([]);
@@ -66,7 +68,12 @@ export function SalaryManager() {
     amount: 0, 
     type: 'salary' as 'salary' | 'salary_advance' | 'duty_payment',
     paidBy: 'accountant' as 'owner' | 'accountant',
-    description: ''
+    description: '',
+    payment_mode: 'Cash' as PaymentMode,
+    account_id: '',
+    reference_number: '',
+    cheque_number: '',
+    cheque_date: ''
   });
 
   const [generationData, setGenerationData] = useState({
@@ -80,6 +87,7 @@ export function SalaryManager() {
 
   useEffect(() => {
     fetchData();
+    fetchActiveBankAccounts().then(setBankAccounts);
   }, [currentMonth]);
 
   useEffect(() => {
@@ -274,6 +282,11 @@ export function SalaryManager() {
   };
 
   const handleRecordPayment = async () => {
+    if (paymentData.payment_mode !== 'Cash' && !paymentData.account_id) {
+      setMessage({ type: 'error', text: 'Please select a bank account' });
+      return;
+    }
+
     if (!selectedStaff || paymentData.amount <= 0) return;
     setSaving(true);
     try {
@@ -288,18 +301,39 @@ export function SalaryManager() {
         else description = `Salary Payment - ${format(currentMonth, 'MMM yyyy')}`;
       }
 
-      await addDoc(collection(db, 'cash_transactions'), {
-        date: format(new Date(), 'yyyy-MM-dd'),
-        type: 'out',
-        category: paymentData.type,
-        amount: paymentData.amount,
-        description: description,
-        linked_id: recordId,
-        staff_id: selectedStaff.id,
-        paid_by: paymentData.paidBy,
-        created_by: auth.currentUser?.uid,
-        created_at: serverTimestamp()
-      });
+      if (paymentData.payment_mode === 'Cash') {
+        await addDoc(collection(db, 'cash_transactions'), {
+          date: format(new Date(), 'yyyy-MM-dd'),
+          type: 'out',
+          category: paymentData.type,
+          amount: paymentData.amount,
+          description: description,
+          linked_id: recordId,
+          staff_id: selectedStaff.id,
+          paid_by: paymentData.paidBy,
+          payment_mode: 'Cash',
+          source_module: 'salary_manager',
+          created_by: auth.currentUser?.uid,
+          created_at: serverTimestamp()
+        });
+      } else {
+        await recordBankTransaction({
+          date: format(new Date(), 'yyyy-MM-dd'),
+          type: 'out',
+          amount: paymentData.amount,
+          description,
+          category: paymentData.type,
+          account_id: paymentData.account_id,
+          payment_mode: paymentData.payment_mode,
+          reference_number: paymentData.reference_number,
+          cheque_number: paymentData.cheque_number,
+          cheque_date: paymentData.cheque_date,
+          linked_id: recordId,
+          staff_id: selectedStaff.id,
+          source_module: 'salary_manager',
+          created_by: auth.currentUser?.uid ?? ''
+        });
+      }
 
       // Update salary status if it exists
       if (salary) {
@@ -699,7 +733,17 @@ export function SalaryManager() {
                       <button 
                         onClick={() => {
                           setSelectedStaff(s);
-                          setPaymentData({ amount: (salary as any).pending_balance || 0, type: 'salary', paidBy: 'accountant', description: '' });
+                          setPaymentData({ 
+                            amount: (salary as any).pending_balance || 0, 
+                            type: 'salary', 
+                            paidBy: (profile?.role === 'admin' || profile?.role === 'developer') ? 'owner' : 'accountant', 
+                            description: '',
+                            payment_mode: 'Cash',
+                            account_id: '',
+                            reference_number: '',
+                            cheque_number: '',
+                            cheque_date: ''
+                          });
                           setIsPaymentModalOpen(true);
                         }}
                         className="flex-1 lg:flex-none btn-secondary !py-2.5 !px-4 text-[10px] font-bold uppercase tracking-widest flex items-center justify-center space-x-2"
@@ -1087,19 +1131,97 @@ export function SalaryManager() {
                   </div>
                 </div>
 
-                <div className="space-y-2">
-                  <label className="label">Amount</label>
-                  <div className="relative">
-                    <span className="absolute left-4 top-1/2 -translate-y-1/2 text-secondary font-bold font-mono">₹</span>
-                    <input
-                      type="number"
-                      value={paymentData.amount || ''}
-                      onChange={(e) => setPaymentData({ ...paymentData, amount: parseInt(e.target.value) || 0 })}
-                      className="input pl-8 font-mono text-xl text-success"
-                      placeholder="0"
-                    />
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <label className="label">Payment Mode</label>
+                    <select
+                      value={paymentData.payment_mode}
+                      onChange={(e) => setPaymentData({ 
+                        ...paymentData, 
+                        payment_mode: e.target.value as PaymentMode,
+                        account_id: '',
+                        reference_number: ''
+                      })}
+                      className="input"
+                    >
+                      <option value="Cash">Cash</option>
+                      <option value="UPI">UPI</option>
+                      <option value="NEFT">NEFT</option>
+                      <option value="RTGS">RTGS</option>
+                      <option value="IMPS">IMPS</option>
+                      <option value="Cheque">Cheque</option>
+                    </select>
+                  </div>
+                  <div className="space-y-2">
+                    <label className="label">Amount</label>
+                    <div className="relative">
+                      <span className="absolute left-4 top-1/2 -translate-y-1/2 text-secondary font-bold font-mono">₹</span>
+                      <input
+                        type="number"
+                        value={paymentData.amount || ''}
+                        onChange={(e) => setPaymentData({ ...paymentData, amount: parseInt(e.target.value) || 0 })}
+                        className="input pl-8 font-mono text-xl text-success"
+                        placeholder="0"
+                      />
+                    </div>
                   </div>
                 </div>
+
+                {paymentData.payment_mode !== 'Cash' && (
+                  <div className="space-y-4 animate-in fade-in slide-in-from-top-2 duration-300">
+                    <div className="space-y-2">
+                      <label className="label">Bank Account</label>
+                      <select
+                        value={paymentData.account_id}
+                        onChange={(e) => setPaymentData({ ...paymentData, account_id: e.target.value })}
+                        className="input"
+                        required
+                      >
+                        <option value="">Select bank account</option>
+                        {bankAccounts.map(a => (
+                          <option key={a.id} value={a.id}>
+                            {a.account_name} — ****{a.account_number_last4}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div className="space-y-2">
+                      <label className="label">Reference / UTR Number</label>
+                      <input
+                        type="text"
+                        value={paymentData.reference_number || ''}
+                        onChange={(e) => setPaymentData({ ...paymentData, reference_number: e.target.value })}
+                        className="input"
+                        placeholder="Leave blank if unknown"
+                      />
+                    </div>
+
+                    {paymentData.payment_mode === 'Cheque' && (
+                      <div className="grid grid-cols-2 gap-4 animate-in fade-in zoom-in-95 duration-300">
+                        <div className="space-y-2">
+                          <label className="label">Cheque Number</label>
+                          <input
+                            type="text"
+                            value={paymentData.cheque_number || ''}
+                            onChange={(e) => setPaymentData({ ...paymentData, cheque_number: e.target.value })}
+                            className="input"
+                            placeholder="6-digit number"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <label className="label">Cheque Date</label>
+                          <input
+                            type="date"
+                            value={paymentData.cheque_date || ''}
+                            onChange={(e) => setPaymentData({ ...paymentData, cheque_date: e.target.value })}
+                            className="input"
+                          />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 <div className="space-y-2">
                   <label className="label">Description / Note</label>

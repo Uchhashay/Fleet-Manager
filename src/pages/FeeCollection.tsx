@@ -20,7 +20,8 @@ import {
   MessageCircle
 } from 'lucide-react';
 import { formatCurrency, cn } from '../lib/utils';
-import { FeeCollection, Student, Receipt, Invoice, Organization, Profile } from '../types';
+import { recordBankTransaction, reverseBankTransaction, fetchActiveBankAccounts } from '../lib/bank-utils';
+import { FeeCollection, Student, Receipt, Invoice, Organization, Profile, BankAccount, PaymentMode } from '../types';
 import { handleFirestoreError, OperationType } from '../lib/firebase-utils';
 import { logActivity } from '../lib/activity-logger';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -37,6 +38,7 @@ import { useAuth } from '../contexts/AuthContext';
 export function FeeCollectionPage() {
   const { profile } = useAuth();
   const [collections, setCollections] = useState<FeeCollection[]>([]);
+  const [bankAccounts, setBankAccounts] = useState<BankAccount[]>([]);
   const [listSearchQuery, setListSearchQuery] = useState('');
   const [students, setStudents] = useState<Student[]>([]);
   const [accountants, setAccountants] = useState<Profile[]>([]);
@@ -54,16 +56,19 @@ export function FeeCollectionPage() {
     school_name: '',
     received_by: '',
     amount: 0,
-    payment_mode: 'Cash' as 'Cash' | 'Online' | 'Cheque',
+    payment_mode: 'Cash' as PaymentMode,
     fee_type: 'Regular Fee',
     notes: '',
-    paid_by: 'accountant' as 'owner' | 'accountant'
+    paid_by: 'accountant' as 'owner' | 'accountant',
+    account_id: '',
+    reference_number: ''
   });
 
   useEffect(() => {
     getDoc(doc(db, 'settings', 'organization')).then(snap => {
       if (snap.exists()) setOrg(snap.data() as Organization);
     });
+    fetchActiveBankAccounts().then(setBankAccounts);
   }, []);
 
   useEffect(() => {
@@ -112,7 +117,7 @@ export function FeeCollectionPage() {
   }, []);
 
   const feeTypes = ["Sunday Fee Collection", "Regular Fee", "Annual Fee", "Other"];
-  const paymentModes = ["Cash", "Online", "Cheque"];
+  const paymentModes: PaymentMode[] = ["Cash", "UPI", "NEFT", "RTGS", "IMPS", "Cheque"];
   const schools = ["RNSN", "Rosary", "Apex B-2", "Other"];
   const collectors = ["Dhruv", "Jai", "KSR", "Other"];
 
@@ -162,6 +167,10 @@ export function FeeCollectionPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (formData.payment_mode !== 'Cash' && !formData.account_id) {
+      alert('Please select a bank account for non-cash payments');
+      return;
+    }
     setLoading(true);
     try {
       const batch = writeBatch(db);
@@ -368,7 +377,7 @@ export function FeeCollectionPage() {
         );
       }
 
-      // Update Cash Transaction
+      // Update Cash/Bank Transactions
       const cashQ = query(
         collection(db, 'cash_transactions'),
         where('category', '==', 'fee_collection'),
@@ -376,7 +385,18 @@ export function FeeCollectionPage() {
       );
       const cashSnap = await getDocs(cashQ);
 
+      const btQ = query(
+        collection(db, 'bank_transactions'),
+        where('linked_id', '==', feeRef.id),
+        limit(1)
+      );
+      const btSnap = await getDocs(btQ);
+
       if (formData.payment_mode === 'Cash') {
+        // Delete any existing bank transaction if payment mode changed to cash
+        if (!btSnap.empty) {
+          await reverseBankTransaction(btSnap.docs[0].id);
+        }
         const cashData = {
           date: formData.date,
           type: 'in',
@@ -385,28 +405,70 @@ export function FeeCollectionPage() {
           description: `Fee Collection: ${formData.student_name} (${formData.fee_type}) - ${formData.school_name}`,
           linked_id: feeRef.id,
           paid_by: formData.paid_by,
+          payment_mode: 'Cash',
+          source_module: 'fee_collection',
           created_by: auth.currentUser?.uid,
           updated_at: serverTimestamp(),
-          source: 'fee_collection'
         };
-
         if (cashSnap.empty) {
           const cashRef = doc(collection(db, 'cash_transactions'));
           batch.set(cashRef, { ...cashData, created_at: serverTimestamp() });
         } else {
-          // Identify and update/consolidate duplicate cash transactions if any
           cashSnap.docs.forEach((docSnap, index) => {
-            if (index === 0) {
-              batch.update(docSnap.ref, cashData);
-            } else {
-              // Delete any accidentally created duplicates
-              batch.delete(docSnap.ref);
-            }
+            if (index === 0) batch.update(docSnap.ref, cashData);
+            else batch.delete(docSnap.ref);
           });
         }
-      } else if (!cashSnap.empty) {
-        // If it was cash before but now it's online/cheque, delete all linked cash records
-        cashSnap.docs.forEach(docSnap => batch.delete(docSnap.ref));
+      } else {
+        // Non-cash: delete any existing cash transaction
+        if (!cashSnap.empty) {
+          cashSnap.docs.forEach(docSnap => batch.delete(docSnap.ref));
+        }
+        // If editing and bank transaction already exists, just update amount/date
+        if (!btSnap.empty) {
+          batch.update(doc(db, 'bank_transactions', btSnap.docs[0].id), {
+            date: formData.date,
+            amount: formData.amount,
+            description: `Fee Collection: ${formData.student_name} (${formData.fee_type}) - ${formData.school_name}`,
+          });
+        } else {
+          // New bank transaction — commit batch first, then record bank transaction
+          await batch.commit();
+          await recordBankTransaction({
+            date: formData.date,
+            type: 'in',
+            amount: formData.amount,
+            description: `Fee Collection: ${formData.student_name} (${formData.fee_type}) - ${formData.school_name}`,
+            category: 'fee_collection',
+            account_id: formData.account_id,
+            payment_mode: formData.payment_mode,
+            reference_number: formData.reference_number,
+            linked_id: feeRef.id,
+            source_module: 'fee_collection',
+            created_by: auth.currentUser?.uid ?? ''
+          });
+          // Early return since batch already committed
+          setIsModalOpen(false);
+          setEditingCollection(null);
+          setSelectedStudent(null);
+          setSearchTerm('');
+          setFormData({
+            date: new Date().toISOString().split('T')[0],
+            student_name: '',
+            receipt_no: '',
+            school_name: '',
+            received_by: '',
+            amount: 0,
+            payment_mode: 'Cash',
+            fee_type: 'Regular Fee',
+            notes: '',
+            paid_by: profile?.role === 'admin' ? 'owner' : 'accountant',
+            account_id: '',
+            reference_number: ''
+          });
+          setLoading(false);
+          return;
+        }
       }
 
       await batch.commit();
@@ -425,7 +487,9 @@ export function FeeCollectionPage() {
         payment_mode: 'Cash',
         fee_type: 'Regular Fee',
         notes: '',
-        paid_by: profile?.role === 'admin' ? 'owner' : 'accountant'
+        paid_by: profile?.role === 'admin' ? 'owner' : 'accountant',
+        account_id: '',
+        reference_number: ''
       });
     } catch (error: any) {
       console.error('Error saving fee collection:', error);
@@ -475,7 +539,9 @@ export function FeeCollectionPage() {
       payment_mode: collection.payment_mode,
       fee_type: collection.fee_type,
       notes: collection.notes || '',
-      paid_by: collection.paid_by || (profile?.role === 'admin' ? 'owner' : 'accountant')
+      paid_by: collection.paid_by || (profile?.role === 'admin' ? 'owner' : 'accountant'),
+      account_id: (collection as any).account_id || '',
+      reference_number: (collection as any).reference_number || ''
     });
     setIsModalOpen(true);
   };
@@ -685,7 +751,7 @@ export function FeeCollectionPage() {
 
   const totalFees = filteredCollections.reduce((acc, c) => acc + c.amount, 0);
   const cashFees = filteredCollections.filter(c => c.payment_mode === 'Cash').reduce((acc, c) => acc + c.amount, 0);
-  const onlineFees = filteredCollections.filter(c => c.payment_mode === 'Online').reduce((acc, c) => acc + c.amount, 0);
+  const onlineFees = filteredCollections.filter(c => c.payment_mode !== 'Cash' && c.payment_mode !== 'Cheque').reduce((acc, c) => acc + c.amount, 0);
 
   const topSchool = Object.entries(collections.reduce((acc, c) => {
     acc[c.school_name] = (acc[c.school_name] || 0) + c.amount;
@@ -1155,13 +1221,47 @@ export function FeeCollectionPage() {
                     <select
                       required
                       value={formData.payment_mode}
-                      onChange={(e) => setFormData({ ...formData, payment_mode: e.target.value as any })}
+                      onChange={(e) => setFormData({ 
+                        ...formData, 
+                        payment_mode: e.target.value as PaymentMode,
+                        account_id: '',
+                        reference_number: ''
+                      })}
                       className="input"
                     >
                       {paymentModes.map(m => <option key={m} value={m}>{m}</option>)}
                     </select>
                   </div>
                 </div>
+
+                {formData.payment_mode !== 'Cash' && (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 animate-in fade-in slide-in-from-top-2 duration-300">
+                    <div className="space-y-2">
+                      <label className="label">Bank Account</label>
+                      <select 
+                        value={formData.account_id}
+                        onChange={(e) => setFormData({ ...formData, account_id: e.target.value })}
+                        className="input"
+                        required
+                      >
+                        <option value="">Select bank account</option>
+                        {bankAccounts.map(a => (
+                          <option key={a.id} value={a.id}>{a.account_name} — ****{a.account_number_last4}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="space-y-2">
+                      <label className="label">Reference / UTR Number</label>
+                      <input 
+                        type="text"
+                        value={formData.reference_number}
+                        onChange={(e) => setFormData({ ...formData, reference_number: e.target.value })}
+                        className="input"
+                        placeholder="Leave blank if unknown"
+                      />
+                    </div>
+                  </div>
+                )}
 
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">

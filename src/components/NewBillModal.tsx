@@ -568,7 +568,10 @@ export function NewBillModal({ isOpen, onClose, prefillClientId }: NewBillModalP
                       >
                          <option value="Cash">Cash</option>
                          <option value="UPI">UPI</option>
-                         <option value="Bank Transfer">Bank Transfer</option>
+                         <option value="NEFT">NEFT</option>
+                         <option value="RTGS">RTGS</option>
+                         <option value="IMPS">IMPS</option>
+                         <option value="Cheque">Cheque</option>
                       </select>
                    </div>
                 </motion.div>

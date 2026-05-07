@@ -26,6 +26,7 @@ import { AllBookings } from './pages/AllBookings';
 import { HirerDirectory } from './pages/HirerDirectory';
 import { BookingCalendar } from './pages/BookingCalendar';
 import Bills from './pages/Bills';
+import { BankAccounts } from './pages/BankAccounts';
 import { AccountantReports } from './pages/AccountantReports';
 import { DriverPerformance } from './pages/DriverPerformance';
 import { Settings } from './pages/Settings';
@@ -159,6 +160,7 @@ export default function App() {
                   <SalaryManager />
                 </ProtectedRoute>
               } />
+              <Route path="/bank-accounts" element={<ProtectedRoute><BankAccounts /></ProtectedRoute>} />
               <Route path="buses" element={
                 <ProtectedRoute allowedRoles={['admin', 'developer']}>
                   <BusManager />

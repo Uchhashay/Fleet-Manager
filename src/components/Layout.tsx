@@ -21,7 +21,8 @@ import {
   ChevronDown,
   Database,
   FileText,
-  LineChart
+  LineChart,
+  Landmark
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { cn } from '../lib/utils';
@@ -90,6 +91,7 @@ export function Layout() {
       icon: Wallet, 
       roles: ['admin', 'accountant', 'developer'] 
     },
+    { path: '/bank-accounts', label: 'Bank Accounts', icon: Landmark, roles: ['admin', 'developer'] },
     { 
       label: 'Fees', 
       icon: GraduationCap, 

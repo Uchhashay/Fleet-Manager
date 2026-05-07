@@ -1,4 +1,5 @@
 export type UserRole = 'admin' | 'accountant' | 'driver' | 'helper' | 'developer';
+export type PaymentMode = 'Cash' | 'UPI' | 'NEFT' | 'RTGS' | 'IMPS' | 'Cheque';
 
 export interface UserPermissions {
   payroll: { view: boolean; edit: boolean };
@@ -124,6 +125,40 @@ export interface ActivityLog {
   timestamp: any;
 }
 
+export interface BankAccount {
+  id: string;
+  account_name: string;
+  bank_name: string;
+  account_number_last4: string;
+  account_type: 'Current' | 'Savings' | 'Overdraft';
+  overdraft_limit: number; // 0 for regular accounts, positive number for overdraft limit
+  ifsc: string;
+  opening_balance: number;
+  current_balance: number;
+  is_active: boolean;
+  created_at: any;
+}
+
+export interface BankTransaction {
+  id: string;
+  date: string;
+  type: 'in' | 'out';
+  amount: number;
+  description: string;
+  category: string;
+  account_id: string;
+  payment_mode: PaymentMode;
+  reference_number?: string;
+  cheque_number?: string;
+  cheque_date?: string;
+  linked_id?: string;
+  staff_id?: string;
+  source_module: string;
+  reconciled: boolean;
+  created_by: string;
+  created_at: any;
+}
+
 export interface BusExpense {
   id: string;
   bus_id: string;
@@ -136,6 +171,7 @@ export interface BusExpense {
   paid_by?: 'owner' | 'accountant';
   created_by: string;
   created_at: any;
+  account_id?: string;
 }
 
 export interface CompanyExpense {
@@ -150,6 +186,7 @@ export interface CompanyExpense {
   paid_by?: 'owner' | 'accountant';
   created_by: string;
   created_at: any;
+  account_id?: string;
 }
 
 export interface CashTransaction {
@@ -164,6 +201,9 @@ export interface CashTransaction {
   paid_by?: 'owner' | 'accountant';
   created_by?: string;
   created_at: any;
+  payment_mode?: PaymentMode;
+  source_module?: string;
+  account_id?: string;
 }
 
 export interface SalaryRecord {
@@ -209,11 +249,12 @@ export interface FeeCollection {
   data_entry_by: string;
   amount: number;
   parchi_photo_url?: string;
-  payment_mode: 'Cash' | 'Online' | 'Cheque';
+  payment_mode: PaymentMode;
   fee_type: string;
   notes?: string;
   paid_by?: 'owner' | 'accountant';
   recorded_by: string;
+  account_id?: string;
   createdBy?: {
     userId: string;
     name: string;
@@ -330,10 +371,11 @@ export interface BookingPayment {
   id: string;
   amount: number;
   paymentDate: any;
-  paymentMode: 'Cash' | 'UPI' | 'Bank Transfer';
+  paymentMode: PaymentMode;
   receivedBy: string;
   notes?: string;
   createdAt: any;
+  account_id?: string;
 }
 
 export interface Invoice {
@@ -378,7 +420,7 @@ export interface Receipt {
   address: string;
   phoneNumber: string;
   paymentDate: any;
-  paymentMode: 'Cash' | 'UPI' | 'Bank Transfer';
+  paymentMode: PaymentMode;
   feeType: 'Sunday Doorstep' | 'Regular via Driver';
   receivedBy: string;
   amountReceived: number;
@@ -395,6 +437,7 @@ export interface Receipt {
   description?: string;
   notes?: string;
   createdAt: any;
+  account_id?: string;
 }
 
 export interface SkippedMonth {
@@ -473,4 +516,45 @@ export interface Organization {
   logo_url?: string;
   updated_at?: any;
   updated_by?: string;
+}
+
+export interface StatementUpload {
+  id: string;
+  account_id: string;
+  filename: string;
+  date_range_start: string;  // YYYY-MM-DD, detected from data
+  date_range_end: string;    // YYYY-MM-DD, detected from data
+  total_rows: number;
+  matched_count: number;
+  unmatched_count: number;
+  ignored_count: number;
+  status: 'pending' | 'reviewed' | 'reconciled';
+  uploaded_by: string;
+  uploaded_at: any;
+}
+
+export interface StatementTransaction {
+  id: string;
+  upload_id: string;
+  account_id: string;
+  date: string;             // YYYY-MM-DD parsed from statement
+  description: string;
+  debit: number;            // 0 if not a debit
+  credit: number;           // 0 if not a credit
+  balance_as_per_statement: number;
+  matched_bank_transaction_id: string;
+  match_confidence: 'high' | 'medium' | 'low' | 'none';
+  status: 'unmatched' | 'matched' | 'confirmed' | 'ignored';
+  uploaded_by: string;
+  uploaded_at: any;
+}
+
+export interface ColumnMap {
+  date: string;
+  description: string;
+  debit: string;
+  credit: string;
+  balance: string;
+  dateFormat: 'DD/MM/YYYY' | 'MM/DD/YYYY' | 'YYYY-MM-DD' | 'DD-MM-YYYY' | 'DD-MMM-YY' | 'DD-MMM-YYYY';
+  amountStyle: 'separate_columns' | 'single_column_signed';
 }
